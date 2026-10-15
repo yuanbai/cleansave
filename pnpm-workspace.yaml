@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@playwright/test@1.64.1'
+  - lucide-react@1.57.0
+  - playwright-core@1.64.1
+  - playwright@1.64.1
+  - undici@8.12.1

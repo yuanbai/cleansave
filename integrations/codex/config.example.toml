@@ -1,0 +1,3 @@
+[mcp_servers.cleansave]
+command = "node"
+args = ["/ABSOLUTE/PATH/TO/cleansave/dist/cli.js", "mcp", "--data-dir", "/ABSOLUTE/PATH/TO/YOUR/LIBRARY"]

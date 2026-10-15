@@ -1,0 +1,14 @@
+node_modules
+.pnpm-store
+dist
+**/dist
+*.tsbuildinfo
+pnpm-lock.yaml
+playwright-report
+test-results
+.local-data
+
+.test-runtime.json
+
+integrations/plugin/skills/
+artifacts/

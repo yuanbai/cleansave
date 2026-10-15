@@ -1,0 +1,8 @@
+{
+  "name": "cleansave",
+  "version": "0.1.0",
+  "description": "Save social links and browse a local media library.",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

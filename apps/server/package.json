@@ -1,0 +1,14 @@
+{
+  "name": "@cleansave/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cleansave/contracts": "workspace:*",
+    "@cleansave/core": "workspace:*",
+    "@cleansave/resolvers": "workspace:*",
+    "@cleansave/storage": "workspace:*",
+    "@cleansave/client": "workspace:*",
+    "@cleansave/mcp": "workspace:*"
+  }
+}

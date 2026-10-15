@@ -1,0 +1,10 @@
+{
+  "name": "@cleansave/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cleansave/contracts": "workspace:*",
+    "@cleansave/client": "workspace:*"
+  }
+}

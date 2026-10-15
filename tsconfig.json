@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contracts" },
+    { "path": "packages/core" },
+    { "path": "packages/resolvers" },
+    { "path": "packages/storage" },
+    { "path": "packages/client" },
+    { "path": "packages/mcp" },
+    { "path": "apps/server" }
+  ]
+}

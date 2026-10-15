@@ -1,0 +1,2 @@
+# Normalize source text to LF for consistent formatting on every platform.
+* text=auto eol=lf
