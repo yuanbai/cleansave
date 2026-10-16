@@ -12,10 +12,27 @@ import {
   listSchema,
   recordPageSchema,
   recordSchema,
+  serviceStatusSchema,
+  type ServiceStatusDto,
 } from '@cleansave/contracts';
 import { CleanSaveClient, mediaDescriptorSchema, type ToolService } from '@cleansave/client';
 
 const idSchema = z.object({ id: z.string().min(1) });
+
+/**
+ * Authorized local lifecycle operations supplied by the CLI, independent of backend availability.
+ * Implementations must enforce token scopes and target only their configured managed library.
+ */
+export interface ServiceControl {
+  /** Read status without starting a backend or disclosing private local paths. */
+  status(): Promise<ServiceStatusDto>;
+  /** Explicitly resume the saved background service; requires write permission. */
+  start(): Promise<ServiceStatusDto>;
+  /** Gracefully stop the owned backend while keeping the stdio adapter connected. */
+  stop(): Promise<ServiceStatusDto>;
+  /** Restart using saved settings and return only after the replacement is ready. */
+  restart(): Promise<ServiceStatusDto>;
+}
 
 function result(value: object): {
   structuredContent: object;
@@ -24,8 +41,11 @@ function result(value: object): {
   return { structuredContent: value, content: [{ type: 'text', text: JSON.stringify(value) }] };
 }
 
-/** Register CleanSave tools and resource templates over an authorized library service. */
-export function createMcpServer(service: ToolService): McpServer {
+/**
+ * Register library tools/resources; optional local lifecycle tools are available only on stdio.
+ * The caller supplies authorization for both services. HTTP servers omit local service control.
+ */
+export function createMcpServer(service: ToolService, control?: ServiceControl): McpServer {
   const server = new McpServer({ name: 'cleansave', version: '0.1.0' });
   const read = {
     readOnlyHint: true,
@@ -39,6 +59,54 @@ export function createMcpServer(service: ToolService): McpServer {
     idempotentHint: false,
     openWorldHint: true,
   };
+  if (control) {
+    for (const operation of [
+      {
+        name: 'get_service_status',
+        description:
+          'Read managed background service status. Requires read access. Never starts the backend. Local stdio MCP only.',
+        run: () => control.status(),
+        annotations: read,
+      },
+      {
+        name: 'start_service',
+        description:
+          'On explicit user request, start the saved background service or reuse its running instance. Requires write access. Restores saved settings; no login/reboot autostart. Local stdio MCP only.',
+        run: () => control.start(),
+        annotations: { ...write, idempotentHint: true, openWorldHint: false },
+      },
+      {
+        name: 'stop_service',
+        description:
+          'On explicit user request, gracefully stop the managed backend and interrupt active jobs, preserving records and completed files. Requires write access. This MCP connection stays alive. Local stdio MCP only.',
+        run: () => control.stop(),
+        annotations: {
+          ...write,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'restart_service',
+        description:
+          'On explicit user request, gracefully restart the managed backend using its saved port, pairing, proxy, and browser settings. Interrupts active jobs, preserves records/files, and waits for readiness. Requires write access. Local stdio MCP only.',
+        run: () => control.restart(),
+        annotations: { ...write, destructiveHint: true, openWorldHint: false },
+      },
+    ]) {
+      server.registerTool(
+        operation.name,
+        {
+          description: operation.description,
+          inputSchema: z.object({}).strict(),
+          outputSchema: serviceStatusSchema,
+          annotations: operation.annotations,
+        },
+        async () => result(serviceStatusSchema.parse(await operation.run())),
+      );
+    }
+  }
   server.registerTool(
     'inspect_input',
     {
@@ -259,8 +327,15 @@ export function createMcpServer(service: ToolService): McpServer {
   return server;
 }
 
-/** Expose MCP over stdio by connecting to the running HTTP backend; never open SQLite here. */
-export async function startStdio(options: { baseUrl: string; token: string }): Promise<void> {
-  const server = createMcpServer(new CleanSaveClient(options));
+/**
+ * Expose library operations through HTTP and optional explicit lifecycle controls over local stdio.
+ * Connecting or reading never starts a backend, and this adapter never opens SQLite.
+ */
+export async function startStdio(options: {
+  baseUrl: string;
+  token: string;
+  control?: ServiceControl;
+}): Promise<void> {
+  const server = createMcpServer(new CleanSaveClient(options), options.control);
   await server.connect(new StdioServerTransport());
 }

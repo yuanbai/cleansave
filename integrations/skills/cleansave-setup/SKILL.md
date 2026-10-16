@@ -90,7 +90,14 @@ It does not prove that this agent session has loaded the tools.
   their contents, tokens, raw share messages, or saved records into setup output.
 - Keep the backend alive after the agent turn. **Do not install launchd, systemd,
   login items, scheduled tasks, or any login/reboot autostart.** After reboot the
-  user can run `service start` again. MCP itself never starts a backend.
+  user can run `service start` again or explicitly ask their stdio MCP agent to
+  call `start_service`. Connecting and ordinary library reads never start a backend.
+  `restart_service` restores the last successful startup settings; `stop_service`
+  keeps the adapter connected. Lifecycle changes require a valid write-scoped token,
+  even while stopped. Use these tools only for an explicit user request, and check
+  `get_service_status` afterward. They cannot control a foreground server or work
+  through HTTP MCP. An older installation needs one launch with this version's
+  `service start` to save its restart settings.
 
 ## 4. Register MCP at user scope
 

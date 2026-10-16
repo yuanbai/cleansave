@@ -64,6 +64,7 @@ app or MCP integration. Metadata-only saving is the default.
 For background operation after building, use `node dist/cli.js service start`.
 `node dist/cli.js service status --verify-mcp` checks the service and MCP connection;
 `node dist/cli.js service stop` stops its backend. Start it again after reboot.
+`node dist/cli.js service restart` reuses its saved startup settings.
 
 To require browser pairing or an API token, start with `node dist/cli.js --require-pairing`
 or set `CLEANSAVE_REQUIRE_PAIRING=1`. The terminal then prints a single-use pairing
@@ -76,7 +77,7 @@ walkthrough, storage locations, optional network settings, and troubleshooting.
 
 CleanSave includes a stdio MCP adapter for Codex, Claude Code, and other local MCP
 clients. It connects to the running backend and reads a private token from the
-same library directory. It does not start another backend or open another database.
+same library directory. Library operations use that backend; the adapter never opens the database.
 
 Tools include `save_media`, `list_records`, `get_record`, `download_record`,
 `refresh_metadata`, `list_count_history`, and `get_media`. Saving returns job IDs;
@@ -84,6 +85,10 @@ agents should check actual completion before reporting downloaded content.
 
 Follow the [step-by-step MCP setup](docs/quick-start.md#connect-an-agent-with-mcp).
 Configuration examples and optional skills are in [integrations/](integrations/).
+Agents using stdio MCP can explicitly inspect, start, stop, and restart a managed
+background service with `get_service_status`, `start_service`, `stop_service`,
+and `restart_service`. The MCP connection stays available while the backend is
+stopped; lifecycle changes require write access and preserve the saved startup settings.
 The stdio adapter uses a read/write token by default; its deletion and local-path
 operations need additional scopes. Credential-free local callers have full access
 when optional pairing is disabled.

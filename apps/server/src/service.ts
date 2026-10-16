@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
+import { access, link, mkdir, open, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
@@ -20,6 +20,13 @@ const stateSchema = z.object({
   startedAt: z.iso.datetime(),
 });
 type State = z.infer<typeof stateSchema>;
+const configurationSchema = z.object({
+  port: stateSchema.shape.port,
+  cli: z.string().refine(isAbsolute),
+  node: z.string().refine(isAbsolute),
+  args: z.array(z.string()).max(32),
+});
+type Configuration = z.infer<typeof configurationSchema>;
 const controlRequest = z.object({
   id: z.uuid(),
   pid: z.number().int().positive(),
@@ -49,12 +56,17 @@ export interface ServiceStatus {
   mcpVerified?: boolean;
 }
 
-/** Launch options; ordinary backend arguments are passed unchanged to the owned child. */
+/**
+ * Launch options with CLEANSAVE_* environment settings resolved into backend arguments.
+ * The child receives these arguments without inheriting replacement CLEANSAVE_* settings.
+ */
 export interface ServiceOptions {
   root: string;
   port: number;
   cli: string;
   args: string[];
+  /** Reuse the original Node executable for explicit restart; defaults to the current executable. */
+  node?: string;
 }
 
 function statePath(root: string): string {
@@ -79,20 +91,49 @@ async function readState(root: string): Promise<State | null> {
   }
 }
 
-async function writeState(root: string, state: State, exclusive = false): Promise<void> {
+async function writePrivateJson(
+  root: string,
+  name: string,
+  value: unknown,
+  exclusive = false,
+): Promise<void> {
   const temporary = join(root, `service-${randomUUID()}.tmp`);
   try {
     const file = await open(temporary, 'wx', 0o600);
     try {
-      await file.writeFile(JSON.stringify(state));
+      await file.writeFile(JSON.stringify(value));
     } finally {
       await file.close();
     }
-    if (exclusive) await link(temporary, statePath(root));
-    else await rename(temporary, statePath(root));
+    if (exclusive) await link(temporary, join(root, name));
+    else await rename(temporary, join(root, name));
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+async function writeState(root: string, state: State, exclusive = false): Promise<void> {
+  await writePrivateJson(root, 'service.json', state, exclusive);
+}
+
+async function readConfiguration(root: string): Promise<Configuration | null> {
+  try {
+    return configurationSchema.parse(
+      JSON.parse(await readFile(join(root, 'service-config.json'), 'utf8')),
+    );
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw new ServiceError(
+      'Cannot read saved service settings. Inspect the private service-config.json file.',
+    );
+  }
+}
+
+function checkPort(port: number, expected: number | undefined): void {
+  if (expected !== undefined && port !== expected)
+    throw new ServiceError(
+      'The managed service port does not match this MCP connection. Check its base URL and library.',
+    );
 }
 
 async function removeState(root: string, id: string): Promise<void> {
@@ -145,7 +186,7 @@ async function canonicalRoot(root: string, create = false): Promise<string> {
   }
 }
 
-async function reserveStart(root: string): Promise<() => Promise<void>> {
+async function reserveOperation(root: string): Promise<() => Promise<void>> {
   const directory = join(root, 'service-start.lock');
   const ownerPath = join(directory, 'owner.json');
   const ownerSchema = z.object({ id: z.uuid(), pid: z.number().int().positive() });
@@ -186,7 +227,7 @@ async function reserveStart(root: string): Promise<() => Promise<void>> {
     await delay(100);
   }
   throw new ServiceError(
-    'Another service start is pending. Inspect service-start.lock before retrying.',
+    'Another service operation is pending. Inspect service-start.lock before retrying.',
   );
 }
 
@@ -202,14 +243,16 @@ export async function serviceStatus(root: string): Promise<ServiceStatus> {
     logFile: join(root, 'service.log'),
   };
   const state = await readState(root);
+  const configuration = state ?? (await readConfiguration(root));
+  if (!configuration) return status;
+  status.url = `http://127.0.0.1:${configuration.port}`;
+  status.mcp = {
+    command: configuration.node,
+    args: [configuration.cli, 'mcp', '--base-url', status.url, '--data-dir', root],
+  };
   if (!state) return status;
-  status.url = `http://127.0.0.1:${state.port}`;
   status.pid = state.pid;
   status.startedAt = state.startedAt;
-  status.mcp = {
-    command: state.node,
-    args: [state.cli, 'mcp', '--base-url', status.url, '--data-dir', root],
-  };
   if (!alive(state.pid)) return status;
   try {
     const reply = await requestControl(state, 'status');
@@ -227,7 +270,7 @@ export async function serviceStatus(root: string): Promise<ServiceStatus> {
  */
 export async function startService(options: ServiceOptions): Promise<ServiceStatus> {
   const root = await canonicalRoot(options.root, true);
-  const release = await reserveStart(root);
+  const release = await reserveOperation(root);
   try {
     return await startReservedService({ ...options, root });
   } finally {
@@ -246,7 +289,7 @@ async function startReservedService(options: ServiceOptions): Promise<ServiceSta
     controlPort: null,
     port: options.port,
     cli: await realpath(resolve(options.cli)),
-    node: process.execPath,
+    node: options.node ?? process.execPath,
     startedAt: new Date().toISOString(),
   };
   try {
@@ -289,7 +332,14 @@ async function startReservedService(options: ServiceOptions): Promise<ServiceSta
           '--managed-service',
           ...options.args,
         ],
-        { detached: true, cwd: root, stdio: ['ignore', log.fd, log.fd, 'ipc'] },
+        {
+          detached: true,
+          cwd: root,
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith('CLEANSAVE_')),
+          ),
+          stdio: ['ignore', log.fd, log.fd, 'ipc'],
+        },
       );
       child.once('error', () => {
         failed = true;
@@ -314,6 +364,16 @@ async function startReservedService(options: ServiceOptions): Promise<ServiceSta
           response.ok &&
           z.object({ status: z.literal('ok') }).safeParse(await response.json()).success
         ) {
+          await writePrivateJson(
+            root,
+            'service-config.json',
+            configurationSchema.parse({
+              port: state.port,
+              cli: state.cli,
+              node: state.node,
+              args: options.args,
+            }),
+          );
           if (launched.connected) launched.disconnect();
           launched.unref();
           return status;
@@ -345,11 +405,33 @@ async function startReservedService(options: ServiceOptions): Promise<ServiceSta
 /**
  * Gracefully stop the backend that proves the saved control identity. Stale or forged PID files
  * never authorize a signal. Unresponsive services are reported for manual inspection.
+ * Optional expectedPort prevents a local MCP connection from controlling another endpoint.
  */
-export async function stopService(root: string): Promise<ServiceStatus> {
+export async function stopService(root: string, expectedPort?: number): Promise<ServiceStatus> {
   root = await canonicalRoot(root);
+  try {
+    await access(root);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      return serviceStatus(root);
+    throw error;
+  }
+  const release = await reserveOperation(root);
+  try {
+    return await stopReservedService(root, expectedPort);
+  } finally {
+    await release();
+  }
+}
+
+async function stopReservedService(root: string, expectedPort?: number): Promise<ServiceStatus> {
   const state = await readState(root);
-  if (!state) return serviceStatus(root);
+  if (!state) {
+    const configuration = await readConfiguration(root);
+    if (configuration) checkPort(configuration.port, expectedPort);
+    return serviceStatus(root);
+  }
+  checkPort(state.port, expectedPort);
   if (!alive(state.pid)) {
     await removeState(root, state.id);
     return serviceStatus(root);
@@ -368,6 +450,36 @@ export async function stopService(root: string): Promise<ServiceStatus> {
   throw new ServiceError(
     'Shutdown is still in progress. Inspect service status before starting again.',
   );
+}
+
+/**
+ * Resume or restart the last successful managed launch. Serializes shutdown and startup, retains
+ * its Node/CLI paths and resolved startup flags, and never adopts an unrelated foreground owner.
+ * Missing saved settings fail before any stop. expectedPort binds local MCP to its configured URL.
+ * restart defaults to true; false resumes a stopped service or reuses a running instance.
+ */
+export async function restartService(
+  root: string,
+  restart = true,
+  expectedPort?: number,
+): Promise<ServiceStatus> {
+  root = await canonicalRoot(root);
+  if (!(await readConfiguration(root)))
+    throw new ServiceError(
+      'No saved background service settings. Start it once with service start using this version.',
+    );
+  const release = await reserveOperation(root);
+  try {
+    const configuration = await readConfiguration(root);
+    if (!configuration) throw new ServiceError('Saved service settings are unavailable.');
+    checkPort(configuration.port, expectedPort);
+    const state = await readState(root);
+    if (state) checkPort(state.port, configuration.port);
+    if (restart) await stopReservedService(root, expectedPort);
+    return await startReservedService({ root, ...configuration });
+  } finally {
+    await release();
+  }
 }
 
 /**

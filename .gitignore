@@ -43,6 +43,7 @@ test-results/
 coverage/
 .test-runtime.json
 service.json
+service-config.json
 service-*.tmp
 service-start.lock/
 integrations/plugin/skills/

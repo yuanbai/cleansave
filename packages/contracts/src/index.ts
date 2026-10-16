@@ -6,6 +6,18 @@ export const platformSchema = z.enum(['douyin', 'xiaohongshu', 'kuaishou', 'tikt
 /** A supported platform identifier shared across adapters and public APIs. */
 export type Platform = z.infer<typeof platformSchema>;
 
+/** Public managed-service status; excludes filesystem paths, launch arguments, and credentials. */
+export const serviceStatusSchema = z.object({
+  state: z.enum(['running', 'stopping', 'starting', 'unreachable', 'stopped', 'unmanaged']),
+  managed: z.boolean(),
+  url: z.url(),
+  pid: z.number().int().positive().optional(),
+  startedAt: z.iso.datetime().optional(),
+});
+
+/** A local service lifecycle result suitable for scoped MCP callers. */
+export type ServiceStatusDto = z.infer<typeof serviceStatusSchema>;
+
 /** Stable display and iteration order for engagement metrics. */
 export const metricNames = ['likes', 'comments', 'shares', 'favorites', 'views'] as const;
 

@@ -5,10 +5,18 @@ for step-by-step Codex, Claude Code, and generic stdio client setup.
 
 Start the CleanSave backend first. The stdio adapter connects to the running
 backend and reads `credentials/agent-token.txt` from the same data directory.
-It never starts another backend or opens SQLite. The default token grants
+Library operations never start a backend, and the adapter never opens SQLite. The default token grants
 read/write access; its deletion and local-path operations require additional
 scopes. Credential-free localhost requests have full access by default. Enable
 `--require-pairing` on the backend to require a paired browser or API token.
+
+Local stdio connections also expose `get_service_status`, `start_service`,
+`stop_service`, and `restart_service` for a background service launched using
+`service start`. These explicit lifecycle commands do not terminate the adapter.
+Status requires read permission; changes require write permission, with token
+revocation checked even while offline. Restart restores the saved startup settings.
+Library reads and connection initialization never start the backend. Lifecycle
+tools are absent from HTTP MCP and cannot control foreground servers.
 
 ## Included assets
 

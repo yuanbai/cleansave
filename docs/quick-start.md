@@ -112,6 +112,7 @@ After building, use these commands from the checkout:
 node dist/cli.js service start
 node dist/cli.js service status --verify-mcp
 node dist/cli.js service stop
+node dist/cli.js service restart
 ```
 
 The start command returns after a detached backend is ready. It keeps running
@@ -120,7 +121,7 @@ backend. `service stop` closes jobs and SQLite before releasing library ownershi
 it retains all saved records and files. After reboot, run `service start` again.
 No OS service, login item, or scheduler is installed.
 
-All three commands return JSON. Status includes the actual URL, library path,
+These commands return JSON. Status includes the actual URL, library path,
 private `service.log` location, and the absolute token-free `mcp` command and
 arguments to use in your client. `--verify-mcp` performs real, read-only
 `get_capabilities` and `list_records` calls through that stdio command.
@@ -145,6 +146,42 @@ An existing foreground server or unrelated port occupant is not stopped or adopt
 stop that server in its own terminal or choose a free port. An unreachable managed
 service is reported for inspection rather than killed by a saved PID. Keep
 `service.json` and logs private; they are runtime files, not source files.
+
+`service restart` restores the last successful launch's port, pairing policy,
+proxy/platform selection, browser path, Node executable, and CLI path. Those
+settings are stored privately in `service-config.json`, which survives stop.
+This includes values originally supplied through `CLEANSAVE_*` environment
+variables. A restart does not inherit replacement settings from the calling agent.
+To change settings, stop and start with the new flags instead. Failed launches
+keep the last successful settings.
+
+### Control the service through MCP
+
+After connecting a local agent through the stdio adapter, ask:
+
+> Use CleanSave to restart its background service, then confirm it is running and list my records.
+
+The stdio adapter stays connected across backend restarts. It also supports:
+
+- `get_service_status`: inspect status with read permission; does not start anything.
+- `stop_service`: gracefully stop active work while retaining records, completed
+  files, annotations, and count history.
+- `start_service`: explicitly resume the saved service, including after a stop or
+  reboot. It reuses an already running instance.
+- `restart_service`: stop and resume using the saved settings; return after the
+  replacement backend is ready.
+
+Changes require write permission. Token scopes and revocation remain enforced
+while the backend is offline. Ordinary library tools report connection errors
+while stopped; they never restart it automatically. Shutdown interrupts active
+jobs; recovery on startup retains their existing job intent.
+
+These local lifecycle tools are available only through stdio MCP, using the same
+library and local URL as the managed service. HTTP MCP does not expose them.
+Foreground servers cannot be adopted or stopped through these tools. Start once
+with `service start` using this version before using restart/start controls;
+older launches have no saved settings. Reload an existing agent's MCP connection
+to discover the new tools. No login or reboot autostart is installed.
 
 Before updating an installation, stop its backend, preserve any local source
 changes, then update, install with the frozen lockfile, build, and start again.
@@ -233,10 +270,11 @@ pastes add no count observations. Refreshing metadata does not download media.
 
 ## Connect an agent with MCP
 
-### 1. Keep the backend running
+### 1. Initialize the library and service
 
-Complete the setup above first. The MCP process is a small stdio adapter to the
-running server. It does **not** start another backend or open SQLite.
+Complete the setup above first. Library tools use the running backend; the stdio
+adapter never opens SQLite. Explicit service lifecycle tools can stop or resume
+a managed background service while keeping the MCP connection available.
 
 The default agent token is created automatically at
 `<data-directory>/credentials/agent-token.txt`. The adapter reads it directly.
@@ -348,21 +386,23 @@ For downloads, ask explicitly:
 
 Useful tools:
 
-| Tool                                     | Purpose                                                          |
-| ---------------------------------------- | ---------------------------------------------------------------- |
-| `inspect_input`                          | Identify supported links without networking.                     |
-| `save_media`                             | Save/reuse a record; returns record and job IDs.                 |
-| `get_job`                                | Check progress, terminal status, and errors.                     |
-| `list_records`, `get_record`             | Browse summaries and read full records.                          |
-| `download_record`                        | Download missing media with an optional watermark policy.        |
-| `refresh_metadata`, `list_count_history` | Capture a new observation and inspect the time series.           |
-| `update_record`                          | Edit personal notes/tags with the current annotation revision.   |
-| `get_media`                              | Read a retained asset descriptor; small images can be previewed. |
-| `cancel_job`, `retry_job`                | Control eligible jobs without losing completed content.          |
-| `remove_downloads`, `delete_record`      | Remove content with an additional delete permission.             |
+| Tool                                               | Purpose                                                                             |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `inspect_input`                                    | Identify supported links without networking.                                        |
+| `save_media`                                       | Save/reuse a record; returns record and job IDs.                                    |
+| `get_job`                                          | Check progress, terminal status, and errors.                                        |
+| `list_records`, `get_record`                       | Browse summaries and read full records.                                             |
+| `download_record`                                  | Download missing media with an optional watermark policy.                           |
+| `refresh_metadata`, `list_count_history`           | Capture a new observation and inspect the time series.                              |
+| `update_record`                                    | Edit personal notes/tags with the current annotation revision.                      |
+| `get_media`                                        | Read a retained asset descriptor; small images can be previewed.                    |
+| `cancel_job`, `retry_job`                          | Control eligible jobs without losing completed content.                             |
+| `remove_downloads`, `delete_record`                | Remove content with an additional delete permission.                                |
+| `get_service_status`                               | Inspect managed background service status through local stdio MCP.                  |
+| `start_service`, `stop_service`, `restart_service` | Explicitly manage that background service through stdio; requires write permission. |
 
 The adapter supplies a read/write token for resolution, downloads, refreshes,
-and notes. That token does not permit deletion or disclosure of local paths.
+notes, and explicit local service lifecycle controls. That token does not permit deletion or disclosure of local paths.
 Default credential-free local requests have full access; enable optional pairing
 to require authorization. Content URLs are local library addresses and require
 a paired session or token only when pairing mode is enabled.
@@ -398,12 +438,12 @@ node dist/cli.js revoke --name my-script
 
 Available scopes:
 
-| Scope        | Allows                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| `read`       | Browse records/history, inspect jobs, read retained media and capabilities.                 |
-| `write`      | Save, resolve, download, refresh metadata, edit annotations, manage eligible jobs/settings. |
-| `delete`     | Remove downloads or delete records.                                                         |
-| `local_path` | Request an absolute local path in a retained-file descriptor.                               |
+| Scope        | Allows                                                                                                                                        |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read`       | Browse records/history, inspect jobs, read retained media, capabilities, and stdio service status.                                            |
+| `write`      | Save, resolve, download, refresh metadata, edit annotations, manage eligible jobs/settings, and explicitly control the service through stdio. |
+| `delete`     | Remove downloads or delete records.                                                                                                           |
+| `local_path` | Request an absolute local path in a retained-file descriptor.                                                                                 |
 
 Combine scopes explicitly when needed, for example `read,write,delete`. Revoking
 an API token does not revoke paired browser sessions. Restarting the backend

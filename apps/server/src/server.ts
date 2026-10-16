@@ -146,6 +146,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     logger: false,
     bodyLimit: 64 * 1024,
     exposeHeadRoutes: true,
+    // Jobs drain in preClose; hijacked MCP HTTP connections must also release on shutdown.
+    forceCloseConnections: true,
   }).withTypeProvider<ZodTypeProvider>();
   const clients = new Set<{ write: (text: string) => boolean; end: () => void }>();
   let sequence = 0;

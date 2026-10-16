@@ -35,7 +35,9 @@ Node.js. These conventions apply to human contributors and coding agents.
 
 - Backend services own resolution, downloads, records, and job state. REST and
   MCP share the same operations. The stdio adapter connects to a running backend;
-  it never opens SQLite or creates a second worker.
+  it never opens SQLite or creates a second worker. Explicit stdio service lifecycle
+  tools may start/stop/restart the managed backend through its controller; reads and
+  MCP connection initialization never start it. Recheck token scopes even while stopped.
 - Keep platform adapters, public DTOs, persisted rows, and transient source access
   distinct. No platform-specific branches in generic file storage or React views.
 - API creation defaults: `downloadContent=false`, `requireNoWatermark=false`.
