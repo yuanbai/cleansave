@@ -11,7 +11,7 @@ const backend = await fixtureBackend(
       calls.set(postId, n);
       if (postId === '999' && n > 1)
         throw new AppError('network_unavailable', 'Fixture refresh unavailable.', 422);
-      return capture({
+      const result = capture({
         id: postId,
         title: n > 1 ? 'Updated fixture landscape' : 'Fixture landscape',
         counts: {
@@ -19,6 +19,15 @@ const backend = await fixtureBackend(
           comments: n % 2 ? null : { kind: 'exact', value: '4' },
         },
       });
+      if (postId === '777') {
+        const description = Array.from(
+          { length: 9 },
+          (_, index) =>
+            `Caption line ${index + 1}: Synthetic post text for the expandable preview.`,
+        ).join('\n');
+        return { ...result, metadata: { ...result.metadata, title: description, description } };
+      }
+      return result;
     },
   },
   { port: 4788, webRoot: resolve('dist/web') },
@@ -31,7 +40,6 @@ await writeFile(
   '.test-runtime.json',
   JSON.stringify({
     root: backend.root,
-    pairingSecret: backend.auth.pairingSecret,
     token: backend.token,
   }),
   { mode: 0o600 },

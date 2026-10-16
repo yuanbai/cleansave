@@ -29,6 +29,7 @@ export async function main(): Promise<void> {
       'data-dir': { type: 'string' },
       port: { type: 'string', default: '4777' },
       dev: { type: 'boolean', default: false },
+      'require-pairing': { type: 'boolean' },
       proxy: { type: 'string' },
       'proxy-platforms': { type: 'string' },
       'browser-executable': { type: 'string' },
@@ -40,7 +41,7 @@ export async function main(): Promise<void> {
   });
   if (values.help) {
     process.stdout.write(
-      'CleanSave: cleansave [start|mcp|token|revoke] [--data-dir PATH] [--port 4777]\nMCP connects to the running backend; token accepts --name and --scopes.\nOptional: --proxy http://127.0.0.1:PORT --proxy-platforms youtube,tiktok --browser-executable PATH\n',
+      'CleanSave: cleansave [start|mcp|token|revoke] [--data-dir PATH] [--port 4777]\nLocalhost access needs no pairing by default. Enable it with --require-pairing or CLEANSAVE_REQUIRE_PAIRING=1.\nMCP connects to the running backend; token accepts --name and --scopes.\nOptional: --proxy http://127.0.0.1:PORT --proxy-platforms youtube,tiktok --browser-executable PATH\n',
     );
     return;
   }
@@ -75,6 +76,13 @@ export async function main(): Promise<void> {
   const sourceWeb = fileURLToPath(new URL('../../web/dist', import.meta.url));
   const proxy = values.proxy ?? process.env.CLEANSAVE_PROXY;
   const browserExecutable = values['browser-executable'] ?? process.env.CLEANSAVE_BROWSER;
+  const requirePairing =
+    values['require-pairing'] ??
+    z
+      .enum(['0', '1', 'false', 'true'])
+      .default('false')
+      .transform((value) => value === '1' || value === 'true')
+      .parse(process.env.CLEANSAVE_REQUIRE_PAIRING);
   const proxyPlatforms = z
     .array(platformSchema)
     .parse(
@@ -86,6 +94,7 @@ export async function main(): Promise<void> {
     root,
     port,
     dev: values.dev,
+    requirePairing,
     ...(proxy ? { network: { proxy }, proxyPlatforms } : {}),
     ...(browserExecutable ? { browserExecutable } : {}),
     ...(existsSync(packedWeb)
@@ -96,8 +105,11 @@ export async function main(): Promise<void> {
   });
   await backend.app.listen({ host: '127.0.0.1', port });
   const uiPort = values.dev ? 5173 : port;
+  const url = `http://127.0.0.1:${uiPort}/`;
   process.stdout.write(
-    `CleanSave is running. Open this single-use pairing link:\nhttp://127.0.0.1:${uiPort}/#pair=${backend.auth.pairingSecret}\nData: ${root}\n`,
+    backend.auth.pairingSecret
+      ? `CleanSave is running. Open this single-use pairing link:\n${url}#pair=${backend.auth.pairingSecret}\nData: ${root}\n`
+      : `CleanSave is running. Open:\n${url}\nLocalhost access: pairing disabled.\nData: ${root}\n`,
   );
   const stop = (): void => {
     void backend.app

@@ -20,6 +20,7 @@ test('production stdio artifact and HTTP MCP share the actual backend library', 
   );
   const stdio = new Client({ name: 'cleansave-acceptance', version: '1' });
   const http = new Client({ name: 'cleansave-http-acceptance', version: '1' });
+  const anonymous = new Client({ name: 'cleansave-local-acceptance', version: '1' });
   try {
     await stdio.connect(
       new StdioClientTransport({
@@ -66,6 +67,14 @@ test('production stdio artifact and HTTP MCP share the actual backend library', 
       arguments: { id: accepted.recordId },
     });
     expect(record.isError).not.toBe(true);
+    await anonymous.connect(
+      new StreamableHTTPClientTransport(new URL('http://127.0.0.1:4788/mcp')),
+    );
+    const localRecord = await anonymous.callTool({
+      name: 'get_record',
+      arguments: { id: accepted.recordId },
+    });
+    expect(localRecord.isError).not.toBe(true);
     expect(z.object({ postId: z.string() }).parse(record.structuredContent).postId).toBe('888');
     const forbidden = await http.callTool({
       name: 'delete_record',
@@ -82,6 +91,7 @@ test('production stdio artifact and HTTP MCP share the actual backend library', 
   } finally {
     await stdio.close();
     await http.close();
+    await anonymous.close();
     await rm(isolated, { recursive: true, force: true });
   }
 });

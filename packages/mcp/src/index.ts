@@ -169,7 +169,7 @@ export function createMcpServer(service: ToolService): McpServer {
     'get_media',
     {
       description:
-        'Access an already-retained asset descriptor. Explicit preview embeds images up to 2 MiB. Local paths require an additional token scope.',
+        'Access an already-retained asset descriptor. Explicit preview embeds images up to 2 MiB. Local paths require local_path permission; supplied tokens must grant it.',
       inputSchema: idSchema.extend({
         preview: z.boolean().default(false),
         localPath: z.boolean().default(false),
@@ -190,7 +190,7 @@ export function createMcpServer(service: ToolService): McpServer {
                 uri: `cleansave://assets/${id}`,
                 name: `Saved ${descriptor.asset.kind}`,
                 mimeType: 'application/json',
-                description: 'Owned asset descriptor and authenticated content address.',
+                description: 'Owned asset descriptor and local content address.',
               },
             ],
       };

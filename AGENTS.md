@@ -40,6 +40,8 @@ Node.js. These conventions apply to human contributors and coding agents.
   distinct. No platform-specific branches in generic file storage or React views.
 - API creation defaults: `downloadContent=false`, `requireNoWatermark=false`.
   Reuse duplicate posts, preserve selected share parameters, and retain job intent.
+- Web app saves and downloads always require watermark-free sources, including retries.
+  Keep the watermark policy configurable for API/MCP callers without a UI toggle.
 - Initial capture and successful explicit refresh append immutable timestamped
   counts. Duplicate pastes, idempotent replays, and download retries add no points.
   Replace other current source metadata only during explicit refresh; preserve
@@ -57,8 +59,10 @@ Node.js. These conventions apply to human contributors and coding agents.
 
 ## Security and licensing
 
-- Bind to loopback; validate Host/Origin and enforce authentication and scopes
-  equally for REST, media access, and MCP.
+- Bind to loopback and validate actual peer addresses, Host, and Origin. Default
+  credential-free localhost access has full permissions across REST, media, and MCP.
+  Require pairing/token authentication only when explicitly enabled. Supplied tokens
+  always retain their scopes; invalid credentials must not fall back to local access.
 - Treat all source data as untrusted. Validate HTTPS hosts, ports, DNS/public IPs,
   and every redirect. Do not forward credentials across origins. Browser recovery
   must enforce the same destination policy at connection time.

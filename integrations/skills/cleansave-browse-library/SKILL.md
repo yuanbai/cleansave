@@ -11,7 +11,7 @@ start downloads.
 
 `get_media` accesses an already-retained asset. A descriptor is not an embedded
 image/video. Request `preview=true` only when viewing a small saved image is
-useful. Larger media stays accessible through the authenticated content address.
+useful. Larger media stays accessible through the local content address, using the backend's configured access mode.
 Request `localPath=true` only when an authorized local filesystem operation
 needs it; that requires the additional token scope and a shared filesystem.
 

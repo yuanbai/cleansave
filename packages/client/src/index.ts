@@ -19,7 +19,7 @@ import {
 } from '@cleansave/contracts';
 
 /**
- * Describe retained media using an authenticated content URL and an optional privileged local path.
+ * Describe retained media using a local content URL and an optional privileged local path.
  */
 export const mediaDescriptorSchema = z.object({
   asset: assetSchema,
@@ -27,7 +27,7 @@ export const mediaDescriptorSchema = z.object({
   localPath: z.string().optional(),
 });
 
-/** A saved asset and access address; the address still requires backend authentication. */
+/** A saved asset and local access address; pairing-mode access requires backend authentication. */
 export type MediaDescriptor = z.infer<typeof mediaDescriptorSchema>;
 
 /** Validate adapter capabilities and runtime limits reported by the backend. */
@@ -88,7 +88,9 @@ export class CleanSaveClient {
         ...init,
         credentials: 'same-origin',
         headers: {
-          'content-type': 'application/json',
+          ...(init.body === undefined || init.body === null
+            ? {}
+            : { 'content-type': 'application/json' }),
           ...(this.options.token ? { authorization: 'Bearer ' + this.options.token } : {}),
           ...init.headers,
         },
@@ -264,7 +266,7 @@ export class CleanSaveClient {
     return { mime: media.asset.mime, data: btoa(binary) };
   }
 
-  /** Return an authenticated content address; a URL alone does not grant access. */
+  /** Return a local content address; pairing mode requires a session or bearer token. */
   public assetUrl(id: string): string {
     return (
       this.options.baseUrl.replace(/\/$/, '') + `/api/v1/assets/${encodeURIComponent(id)}/content`

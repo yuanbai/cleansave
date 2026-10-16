@@ -267,7 +267,7 @@ describe('capture and library lifecycle', () => {
     expect(policy.json().requireNoWatermark).toBe(true);
   });
   it('enforces private access, local origin/host and agent delete/path scopes', async () => {
-    const b = await fixture();
+    const b = await fixture(undefined, { requirePairing: true });
     expect(
       (await b.app.inject({ url: '/api/v1/records', headers: { host: '127.0.0.1:4777' } }))
         .statusCode,

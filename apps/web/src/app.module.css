@@ -193,13 +193,7 @@
   max-width: 1280px;
   margin: 0 auto;
   padding: 32px 24px;
-  min-height: calc(100vh - 136px);
-}
-.footer {
-  color: var(--muted);
-  font-size: 12px;
-  padding: 20px 24px;
-  text-align: center;
+  min-height: calc(100vh - 72px);
 }
 .titleRow {
   display: flex;
@@ -444,10 +438,29 @@
   align-items: center;
   margin-bottom: 24px;
 }
-.eyebrow {
+.savedDate {
   color: var(--muted);
   font-size: 12px;
-  margin-bottom: 8px;
+  margin: 0;
+}
+.recordIdentity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+.recordAuthor {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.postDetailsTitle {
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: normal;
+  margin: 0;
 }
 .detailGrid {
   display: grid;
@@ -467,6 +480,9 @@
 }
 .panel button {
   margin-right: 6px;
+}
+.panel > .titleRow:last-child {
+  margin-bottom: 0;
 }
 .viewer {
   border: 1px solid var(--line);
@@ -498,9 +514,32 @@
   color: var(--muted);
   background: var(--soft);
 }
+.postDescription {
+  margin-bottom: 16px;
+}
 .description {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.descriptionCollapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.descriptionToggle {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+}
+.descriptionToggle:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 .sourceUrl {
   font-size: 12px;
@@ -523,6 +562,22 @@
 }
 .full {
   width: 100%;
+}
+.downloadActions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.downloadActions > button {
+  margin-right: 0;
+}
+.downloadFiles {
+  margin-top: 20px;
+}
+.downloadFiles > .receipt:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
 }
 .error {
   color: var(--danger);
@@ -596,9 +651,19 @@
   position: sticky;
   top: 0;
 }
+.historyResults {
+  position: relative;
+  padding-top: 20px;
+}
+.historyLoading {
+  position: absolute;
+  top: 0;
+  right: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .chart {
   width: 100%;
-  margin-top: 20px;
   overflow: visible;
 }
 .chart line {

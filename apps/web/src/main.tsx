@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BrowserRouter,
@@ -36,6 +36,7 @@ import {
 import { CleanSaveClient, ApiError, type Settings } from '@cleansave/client';
 import {
   metricNames,
+  type Accepted,
   type Candidate,
   type Count,
   type CountCapture,
@@ -53,7 +54,6 @@ const queryClient = new QueryClient({
 const secret = new URLSearchParams(window.location.hash.slice(1)).get('pair');
 if (secret)
   window.history.replaceState(null, '', window.location.pathname + window.location.search);
-const paired = secret ? api.pair(secret) : Promise.resolve();
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'The operation could not finish.';
@@ -122,11 +122,24 @@ function App(): ReactNode {
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
-      await paired;
-      return api.settings();
+      try {
+        return await api.settings();
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401 || !secret) throw error;
+        await api.pair(secret);
+        return api.settings();
+      }
     },
   });
   const t = translator(settings.data?.language ?? 'en');
+  useEffect(() => {
+    const acceptPairingLink = (): void => {
+      // Same-page pairing links change only the hash; rerun bootstrap to consume the new secret.
+      if (new URLSearchParams(window.location.hash.slice(1)).has('pair')) window.location.reload();
+    };
+    window.addEventListener('hashchange', acceptPairingLink);
+    return () => window.removeEventListener('hashchange', acceptPairingLink);
+  }, []);
   useEffect(() => {
     document.documentElement.lang = settings.data?.language ?? 'en';
     document.documentElement.dataset.theme = settings.data?.theme ?? 'system';
@@ -151,19 +164,14 @@ function App(): ReactNode {
         <p>{t('loading')}</p>
       </main>
     );
-  if (settings.isError)
+  if (settings.isError) {
+    const needsPairing = settings.error instanceof ApiError && settings.error.status === 401;
     return (
       <main className={s.connect}>
         <h1>CleanSave</h1>
-        <h2>{t('pairTitle')}</h2>
-        <p>{t('pairHint')}</p>
-        <ErrorNotice
-          error={
-            settings.error instanceof ApiError && settings.error.status === 401
-              ? null
-              : settings.error
-          }
-        />
+        <h2>{t(needsPairing ? 'pairTitle' : 'connectionTitle')}</h2>
+        <p>{t(needsPairing ? 'pairHint' : 'connectionHint')}</p>
+        <ErrorNotice error={needsPairing ? null : settings.error} />
         <button
           onClick={() => {
             void settings.refetch();
@@ -173,6 +181,7 @@ function App(): ReactNode {
         </button>
       </main>
     );
+  }
   return (
     <>
       <header className={s.header}>
@@ -219,7 +228,6 @@ function App(): ReactNode {
           <Route path="*" element={<Link to="/">{t('back')}</Link>} />
         </Routes>
       </main>
-      <footer className={s.footer}>{t('localOnly')} · CleanSave 0.1</footer>
     </>
   );
 }
@@ -258,7 +266,7 @@ function Library({ t }: { t: Translate }): ReactNode {
         <div>
           <h1>{t('library')}</h1>
           <p className={s.muted}>
-            {t('localOnly')} · {items.length}
+            {t('records')}: {items.length}
             {records.hasNextPage ? '+' : ''}
           </p>
         </div>
@@ -354,7 +362,6 @@ function Library({ t }: { t: Translate }): ReactNode {
         <div className={s.empty}>
           <LinkIcon size={32} />
           <h2>{search.size ? t('noMatches') : t('empty')}</h2>
-          <p>{t('emptyHint')}</p>
           <Link to="/add" className={s.primary}>
             <Plus size={17} />
             {t('add')}
@@ -417,7 +424,6 @@ function AddLink({ t, defaults }: { t: Translate; defaults: Settings }): ReactNo
   const query = useQueryClient();
   const [input, setInput] = useState('');
   const [download, setDownload] = useState(defaults.downloadContent);
-  const [clean, setClean] = useState(defaults.requireNoWatermark);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState('');
   const save = useMutation({
@@ -432,7 +438,7 @@ function AddLink({ t, defaults }: { t: Translate; defaults: Settings }): ReactNo
         input,
         ...(selected ? { selectedUrl: selected } : {}),
         downloadContent: download,
-        requireNoWatermark: clean,
+        requireNoWatermark: true,
       });
     },
     onSuccess: (result) => {
@@ -492,16 +498,7 @@ function AddLink({ t, defaults }: { t: Translate; defaults: Settings }): ReactNo
           />
           {t('download')}
         </label>
-        {!download && <p className={s.helper}>{t('metadataHint')}</p>}
-        <label className={s.check}>
-          <input
-            type="checkbox"
-            checked={clean}
-            onChange={(event) => setClean(event.target.checked)}
-          />
-          {t('clean')}
-        </label>
-        <p className={s.helper}>{t('cleanHint')}</p>
+        <p className={s.helper}>{t('metadataHint')}</p>
         <ErrorNotice error={save.error} />
         <div className={s.actions}>
           <button type="button" onClick={() => navigate('/')}>
@@ -552,6 +549,62 @@ function Detail({ t }: { t: Translate }): ReactNode {
   );
 }
 
+/** Retry resolution while requiring clean sources for any requested follow-up download. */
+async function retryResolution(record: RecordDto): Promise<Accepted> {
+  if (record.options.downloadContent && !record.options.requireNoWatermark) {
+    // Reusing the saved link updates pending download intent without replacing captured metadata.
+    return api.create({
+      input: record.originalUrl,
+      downloadContent: true,
+      requireNoWatermark: true,
+    });
+  }
+  return api.resolve(record.id);
+}
+
+/** Show a four-line caption preview, with expansion only when its rendered text overflows. */
+function PostDescription({ text, t }: { text: string; t: Translate }): ReactNode {
+  const id = useId();
+  const paragraph = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const element = paragraph.current;
+    if (!element) return;
+    const measure = (): void => {
+      const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight);
+      setOverflows(element.scrollHeight > lineHeight * 4 + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text]);
+  if (!text) return null;
+  return (
+    <div className={s.postDescription}>
+      <p
+        ref={paragraph}
+        id={id}
+        className={`${s.description} ${expanded ? '' : s.descriptionCollapsed}`}
+      >
+        {text}
+      </p>
+      {overflows && (
+        <button
+          type="button"
+          className={s.descriptionToggle}
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {t(expanded ? 'showLess' : 'showMore')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RecordDetail({
   record,
   t,
@@ -563,7 +616,6 @@ function RecordDetail({
 }): ReactNode {
   const query = useQueryClient();
   const navigate = useNavigate();
-  const [clean, setClean] = useState(record.options.requireNoWatermark);
   const [confirmation, setConfirmation] = useState<'remove' | 'delete' | null>(null);
   const invalidate = (): void => {
     void query.invalidateQueries({ queryKey: ['record', record.id] });
@@ -572,8 +624,8 @@ function RecordDetail({
   const action = useMutation({
     mutationFn: async (type: 'refresh' | 'download' | 'resolve' | 'remove' | 'delete') => {
       if (type === 'refresh') return api.refresh(record.id);
-      if (type === 'download') return api.download(record.id, clean);
-      if (type === 'resolve') return api.resolve(record.id);
+      if (type === 'download') return api.download(record.id, true);
+      if (type === 'resolve') return retryResolution(record);
       if (type === 'remove') return api.removeDownloads(record.id);
       return api.deleteRecord(record.id);
     },
@@ -589,6 +641,7 @@ function RecordDetail({
     enabled: record.activeJobIds.length > 0,
     refetchInterval: 1200,
   });
+  const hasDownloads = record.assets.some((asset) => asset.state === 'complete');
   return (
     <>
       <Link to="/" className={s.back}>
@@ -600,22 +653,6 @@ function RecordDetail({
           {t(notice as MessageKey)}
         </p>
       )}
-      <div className={s.titleRow}>
-        <div>
-          <div className={s.eyebrow}>
-            {record.platform} · {record.postId ?? '…'}
-          </div>
-          <h1>
-            {record.metadata?.title || record.metadata?.description.slice(0, 160) || t('loading')}
-          </h1>
-          <p className={s.muted}>
-            {record.metadata?.author.name} · {t('saved')} {date(record.savedAt)}
-          </p>
-        </div>
-        <a href={record.originalUrl} target="_blank" rel="noreferrer" className={s.button}>
-          {t('openSource')}
-        </a>
-      </div>
       <div className={s.detailGrid}>
         <section>
           <div className={s.viewer}>
@@ -666,14 +703,28 @@ function RecordDetail({
               </div>
             )}
           </div>
-          <section className={s.panel}>
+          <section className={s.panel} aria-labelledby="post-details-heading">
             <div className={s.titleRow}>
-              <h2>{t('source')}</h2>
+              <h1 id="post-details-heading" className={s.postDetailsTitle}>
+                {t('postDetails')}
+              </h1>
               <a className={s.button} href={`/api/v1/records/${record.id}/export`} download>
                 {t('export')}
               </a>
             </div>
-            <p className={s.description}>{record.metadata?.description}</p>
+            <div className={s.recordIdentity}>
+              {record.metadata?.author.name && (
+                <strong className={s.recordAuthor}>{record.metadata.author.name}</strong>
+              )}
+              <span className={s.badge}>{record.platform}</span>
+              <p className={s.savedDate}>
+                {t('saved')} <time dateTime={record.savedAt}>{date(record.savedAt)}</time>
+              </p>
+            </div>
+            <PostDescription
+              text={record.metadata?.description || record.metadata?.title || ''}
+              t={t}
+            />
             <a href={record.originalUrl} target="_blank" rel="noreferrer" className={s.sourceUrl}>
               {record.originalUrl}
             </a>
@@ -685,14 +736,22 @@ function RecordDetail({
                 {warning.replaceAll('_', ' ')}
               </p>
             ))}
+            <div className={s.actions}>
+              <button
+                className={s.danger}
+                disabled={action.isPending}
+                onClick={() => setConfirmation('delete')}
+              >
+                {t('deleteRecord')}
+              </button>
+            </div>
           </section>
           <CountsHistory id={record.id} t={t} />
         </section>
         <aside>
           <section className={s.panel}>
             <div className={s.titleRow}>
-              <h2>{t('metadata')}</h2>
-              <span className={s.badge}>{stateLabel(record.downloadState, t)}</span>
+              <h2>{t('countSummary')}</h2>
             </div>
             <div className={s.metricGrid}>
               {metricNames.map((metric) => (
@@ -709,7 +768,6 @@ function RecordDetail({
                 !record.metadata ||
                 active.data?.some((job) => job.type === 'refresh')
               }
-              title={t('refreshHint')}
               onClick={() => action.mutate('refresh')}
             >
               <RefreshCw size={16} />
@@ -722,28 +780,34 @@ function RecordDetail({
               </p>
             )}
           </section>
-          <section className={s.panel}>
-            <h2>{t('download')}</h2>
-            <label className={s.check}>
-              <input
-                type="checkbox"
-                checked={clean}
-                onChange={(event) => setClean(event.target.checked)}
-              />
-              {t('clean')}
-            </label>
-            <button
-              className={`${s.primary} ${s.full}`}
-              disabled={
-                action.isPending ||
-                !record.metadata ||
-                active.data?.some((job) => job.type === 'download')
-              }
-              onClick={() => action.mutate('download')}
-            >
-              <Download size={16} />
-              {t('downloadMissing')}
-            </button>
+          <section className={s.panel} aria-labelledby="download-heading">
+            <div className={s.titleRow}>
+              <h2 id="download-heading">{t('download')}</h2>
+              <span className={s.badge}>{stateLabel(record.downloadState, t)}</span>
+            </div>
+            {(record.downloadState !== 'complete' || hasDownloads) && (
+              <div className={s.downloadActions}>
+                {record.downloadState !== 'complete' && (
+                  <button
+                    className={`${s.primary} ${s.full}`}
+                    disabled={
+                      action.isPending ||
+                      !record.metadata ||
+                      active.data?.some((job) => job.type === 'download')
+                    }
+                    onClick={() => action.mutate('download')}
+                  >
+                    <Download size={16} />
+                    {t('downloadMissing')}
+                  </button>
+                )}
+                {hasDownloads && (
+                  <button disabled={action.isPending} onClick={() => setConfirmation('remove')}>
+                    {t('removeFiles')}
+                  </button>
+                )}
+              </div>
+            )}
             {record.resolutionState === 'failed' && (
               <button onClick={() => action.mutate('resolve')}>{t('resolve')}</button>
             )}
@@ -762,7 +826,6 @@ function RecordDetail({
                   </span>
                   <small>
                     {job.completedItems}/{job.totalItems || '—'} · {formatBytes(job.bytes)}
-                    {job.type === 'download' && job.requireNoWatermark && <> · {t('clean')}</>}
                   </small>
                   {job.type !== 'delete' && job.type !== 'remove_downloads' && (
                     <button
@@ -778,33 +841,24 @@ function RecordDetail({
                   )}
                 </div>
               ))}
+            {record.assets.length > 0 && (
+              <div className={s.downloadFiles}>
+                {record.assets.map((asset) => (
+                  <div className={s.receipt} key={asset.id}>
+                    <strong>
+                      {asset.kind} · {formatBytes(asset.bytes)}
+                    </strong>
+                    <small>
+                      {asset.mime} · {asset.watermarkStatus}
+                    </small>
+                    <small>{asset.validation}</small>
+                    <code title={asset.sha256}>SHA-256 {asset.sha256.slice(0, 16)}…</code>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
           <Annotations record={record} t={t} />
-          <section className={s.panel}>
-            <h2>{t('receipts')}</h2>
-            {record.assets.map((asset) => (
-              <div className={s.receipt} key={asset.id}>
-                <strong>
-                  {asset.kind} · {formatBytes(asset.bytes)}
-                </strong>
-                <small>
-                  {asset.mime} · {asset.watermarkStatus}
-                </small>
-                <small>{asset.validation}</small>
-                <code title={asset.sha256}>SHA-256 {asset.sha256.slice(0, 16)}…</code>
-              </div>
-            ))}
-            <button disabled={action.isPending} onClick={() => setConfirmation('remove')}>
-              {t('removeFiles')}
-            </button>
-            <button
-              className={s.danger}
-              disabled={action.isPending}
-              onClick={() => setConfirmation('delete')}
-            >
-              {t('deleteRecord')}
-            </button>
-          </section>
         </aside>
       </div>
       {confirmation && (
@@ -916,18 +970,48 @@ function Annotations({ record, t }: { record: RecordDto; t: Translate }): ReactN
   );
 }
 
+/** Format a date for a minute-precision input using the browser's local timezone. */
+function localDateTime(value: Date): string {
+  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function CountsHistory({ id, t }: { id: string; t: Translate }): ReactNode {
   const [metric, setMetric] = useState<MetricName>('likes');
   const [windowDays, setWindowDays] = useState('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const fromInput = useRef<HTMLInputElement>(null);
+  const toInput = useRef<HTMLInputElement>(null);
+  const rangeErrorId = useId();
+  const invalidRange = from !== '' && to !== '' && Date.parse(from) >= Date.parse(to);
   const [window, setWindow] = useState<{ from?: string; to?: string }>({});
+
+  /** Apply valid date bounds immediately; retain the chart during incomplete or invalid input. */
+  function updateCustomWindow(nextFrom: string, nextTo: string): void {
+    const inputsValid = fromInput.current?.validity.valid && toInput.current?.validity.valid;
+    setWindowDays(inputsValid && !nextFrom && !nextTo ? 'all' : 'custom');
+    if (!inputsValid) return;
+    const start = nextFrom ? new Date(nextFrom) : null;
+    const end = nextTo ? new Date(nextTo) : null;
+    if ((start && !Number.isFinite(start.getTime())) || (end && !Number.isFinite(end.getTime()))) {
+      return;
+    }
+    if (start && end && start.getTime() >= end.getTime()) return;
+    setWindow({
+      ...(start ? { from: start.toISOString() } : {}),
+      ...(end ? { to: end.toISOString() } : {}),
+    });
+  }
+
   const history = useInfiniteQuery({
     queryKey: ['history', id, window],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       api.history(id, { ...window, limit: 100, ...(pageParam ? { cursor: pageParam } : {}) }),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+    // Retain this record's results while a new window loads to prevent scroll jumps.
+    placeholderData: (data, previousQuery) =>
+      previousQuery?.queryKey[1] === id ? data : undefined,
   });
   const items = history.data?.pages.flatMap((page) => page.items) ?? [];
   return (
@@ -940,17 +1024,24 @@ function CountsHistory({ id, t }: { id: string; t: Translate }): ReactNode {
           onChange={(event) => {
             const value = event.target.value;
             setWindowDays(value);
-            setWindow(
-              value === 'all'
-                ? {}
-                : { from: new Date(Date.now() - Number(value) * 86400000).toISOString() },
-            );
+            if (value === 'all') {
+              setFrom('');
+              setTo('');
+              setWindow({});
+            } else if (value === '7' || value === '30') {
+              // Use the next minute boundary so the exclusive end includes the current minute.
+              const end = new Date(Math.ceil(Date.now() / 60_000) * 60_000);
+              const start = new Date(end.getTime() - Number(value) * 86_400_000);
+              setFrom(localDateTime(start));
+              setTo(localDateTime(end));
+              setWindow({ from: start.toISOString(), to: end.toISOString() });
+            }
           }}
         >
           <option value="all">{t('allTime')}</option>
           <option value="7">{t('days7')}</option>
           <option value="30">{t('days30')}</option>
-          {windowDays === 'custom' && <option value="custom">{t('from')}…</option>}
+          {windowDays === 'custom' && <option value="custom">{t('customRange')}</option>}
         </select>
       </div>
       <div className={s.segment}>
@@ -965,68 +1056,85 @@ function CountsHistory({ id, t }: { id: string; t: Translate }): ReactNode {
           {t('from')}
           <input
             type="datetime-local"
+            ref={fromInput}
             value={from}
-            onChange={(event) => setFrom(event.target.value)}
+            aria-invalid={invalidRange || undefined}
+            aria-describedby={invalidRange ? rangeErrorId : undefined}
+            onChange={(event) => {
+              setFrom(event.target.value);
+              updateCustomWindow(event.target.value, to);
+            }}
           />
         </label>
         <label>
           {t('to')}
-          <input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} />
+          <input
+            type="datetime-local"
+            ref={toInput}
+            value={to}
+            aria-invalid={invalidRange || undefined}
+            aria-describedby={invalidRange ? rangeErrorId : undefined}
+            onChange={(event) => {
+              setTo(event.target.value);
+              updateCustomWindow(from, event.target.value);
+            }}
+          />
         </label>
-        <button
-          onClick={() => {
-            setWindowDays('custom');
-            setWindow({
-              ...(from ? { from: new Date(from).toISOString() } : {}),
-              ...(to ? { to: new Date(to).toISOString() } : {}),
-            });
-          }}
-        >
-          {t('apply')}
-        </button>
       </div>
+      {invalidRange && (
+        <p id={rangeErrorId} className={s.error} role="alert">
+          {t('invalidCountRange')}
+        </p>
+      )}
       <ErrorNotice error={history.error} />
-      {items.length ? (
-        <>
-          <Chart items={items} metric={metric} t={t} />
-          {items.length === 1 && <p className={s.helper}>{t('onePoint')}</p>}
-          <p className={s.helper}>{t('observationHint')}</p>
-          <div className={s.tableScroll}>
-            <table>
-              <thead>
-                <tr>
-                  <th>{t('timestamp')}</th>
-                  {metricNames.map((name) => (
-                    <th key={name}>{t(name)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <time dateTime={item.capturedAt}>{date(item.capturedAt)}</time>
-                    </td>
+      <div className={s.historyResults} aria-busy={history.isFetching}>
+        {history.isFetching && !history.isPending && (
+          <span className={s.historyLoading} role="status">
+            {t('loading')}
+          </span>
+        )}
+        {items.length ? (
+          <>
+            <Chart items={items} metric={metric} t={t} />
+            {items.length === 1 && <p className={s.helper}>{t('onePoint')}</p>}
+            <p className={s.helper}>{t('observationHint')}</p>
+            <div className={s.tableScroll}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('timestamp')}</th>
                     {metricNames.map((name) => (
-                      <td key={name} title={!item.counts[name] ? t('unavailable') : undefined}>
-                        {countLabel(item.counts[name], t)}
-                      </td>
+                      <th key={name}>{t(name)}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      ) : (
-        <p className={s.muted}>{history.isPending ? t('loading') : t('noCounts')}</p>
-      )}
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <time dateTime={item.capturedAt}>{date(item.capturedAt)}</time>
+                      </td>
+                      {metricNames.map((name) => (
+                        <td key={name} title={!item.counts[name] ? t('unavailable') : undefined}>
+                          {countLabel(item.counts[name], t)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p className={s.muted}>{history.isPending ? t('loading') : t('noCounts')}</p>
+        )}
+      </div>
       {history.hasNextPage && (
         <button
           onClick={() => {
             void history.fetchNextPage();
           }}
-          disabled={history.isFetchingNextPage}
+          disabled={history.isFetchingNextPage || history.isPlaceholderData}
         >
           {t('loadMore')}
         </button>
@@ -1117,8 +1225,14 @@ function Activity({ t }: { t: Translate }): ReactNode {
   const jobs = useQuery({ queryKey: ['jobs'], queryFn: () => api.jobs(), refetchInterval: 1500 });
   const action = useMutation({
     mutationFn: async ({ id, type }: { id: string; type: 'cancel' | 'retry' }): Promise<void> => {
-      if (type === 'cancel') await api.cancelJob(id);
-      else await api.retryJob(id);
+      if (type === 'cancel') {
+        await api.cancelJob(id);
+      } else {
+        const job = await api.getJob(id);
+        if (job.type === 'download') await api.download(job.recordId, true);
+        else if (job.type === 'resolve') await retryResolution(await api.getRecord(job.recordId));
+        else await api.retryJob(id);
+      }
     },
     onSuccess: () => {
       void query.invalidateQueries({ queryKey: ['jobs'] });
@@ -1169,39 +1283,63 @@ function Activity({ t }: { t: Translate }): ReactNode {
 
 function Preferences({ t, settings }: { t: Translate; settings: Settings }): ReactNode {
   const query = useQueryClient();
-  const [draft, setDraft] = useState(settings);
+  const [pendingSettings, setPendingSettings] = useState(settings);
   const mutation = useMutation({
-    mutationFn: () => api.setSettings(draft),
+    mutationFn: (value: Settings) => api.setSettings(value),
+    onMutate: async (value) => {
+      await query.cancelQueries({ queryKey: ['settings'] });
+      const previous = query.getQueryData<Settings>(['settings']) ?? settings;
+      query.setQueryData(['settings'], value);
+      return previous;
+    },
     onSuccess: (updated) => query.setQueryData(['settings'], updated),
+    onError: (_error, _variables, previous) => {
+      if (previous) query.setQueryData(['settings'], previous);
+    },
   });
+  const currentSettings = mutation.isPending ? pendingSettings : settings;
+
+  /** Update controlled inputs synchronously while their optimistic save starts. */
+  function updateSettings(value: Settings): void {
+    setPendingSettings(value);
+    mutation.mutate(value);
+  }
+
   const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: () => api.capabilities() });
   return (
     <div className={s.preferences}>
       <h1>{t('settings')}</h1>
-      <section className={s.panel}>
-        <h2>{t('appearance')}</h2>
+      <section className={s.panel} aria-busy={mutation.isPending}>
         <label className={s.field}>
           {t('appearance')}
           <select
             aria-label={t('appearance')}
-            value={draft.theme}
-            onChange={(event) =>
-              setDraft({ ...draft, theme: event.target.value as Settings['theme'] })
-            }
+            value={currentSettings.theme}
+            disabled={mutation.isPending}
+            onChange={(event) => {
+              const theme = event.target.value;
+              if (theme === 'system' || theme === 'light' || theme === 'dark') {
+                updateSettings({ ...currentSettings, theme });
+              }
+            }}
           >
-            <option value="system">System / 系统</option>
-            <option value="light">Light / 浅色</option>
-            <option value="dark">Dark / 深色</option>
+            <option value="system">{t('themeSystem')}</option>
+            <option value="light">{t('themeLight')}</option>
+            <option value="dark">{t('themeDark')}</option>
           </select>
         </label>
         <label className={s.field}>
           {t('language')}
           <select
             aria-label={t('language')}
-            value={draft.language}
-            onChange={(event) =>
-              setDraft({ ...draft, language: event.target.value as Settings['language'] })
-            }
+            value={currentSettings.language}
+            disabled={mutation.isPending}
+            onChange={(event) => {
+              const language = event.target.value;
+              if (language === 'en' || language === 'zh-CN') {
+                updateSettings({ ...currentSettings, language });
+              }
+            }}
           >
             <option value="en">English</option>
             <option value="zh-CN">简体中文</option>
@@ -1211,33 +1349,19 @@ function Preferences({ t, settings }: { t: Translate; settings: Settings }): Rea
         <label className={s.check}>
           <input
             type="checkbox"
-            checked={draft.downloadContent}
-            onChange={(event) => setDraft({ ...draft, downloadContent: event.target.checked })}
+            checked={currentSettings.downloadContent}
+            disabled={mutation.isPending}
+            onChange={(event) =>
+              updateSettings({ ...currentSettings, downloadContent: event.target.checked })
+            }
           />
           {t('download')}
         </label>
-        <label className={s.check}>
-          <input
-            type="checkbox"
-            checked={draft.requireNoWatermark}
-            onChange={(event) => setDraft({ ...draft, requireNoWatermark: event.target.checked })}
-          />
-          {t('clean')}
-        </label>
-        <button
-          className={s.primary}
-          onClick={() => mutation.mutate()}
-          disabled={mutation.isPending}
-        >
-          {t('saveSettings')}
-        </button>
-        {mutation.isSuccess && <p className={s.success}>{t('settingsSaved')}</p>}
         <ErrorNotice error={mutation.error} />
       </section>
       <section className={s.panel}>
         <h2>{t('capabilities')}</h2>
         <ErrorNotice error={capabilities.error} />
-        <p className={s.helper}>{t('fixtureOnly')}</p>
         {capabilities.data?.adapters.map((adapter) => (
           <div className={s.receipt} key={adapter.platform}>
             <strong>{adapter.platform}</strong>

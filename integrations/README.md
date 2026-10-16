@@ -6,7 +6,9 @@ for step-by-step Codex, Claude Code, and generic stdio client setup.
 Start the CleanSave backend first. The stdio adapter connects to the running
 backend and reads `credentials/agent-token.txt` from the same data directory.
 It never starts another backend or opens SQLite. The default token grants
-read/write access; deletion and local paths require additional scopes.
+read/write access; its deletion and local-path operations require additional
+scopes. Credential-free localhost requests have full access by default. Enable
+`--require-pairing` on the backend to require a paired browser or API token.
 
 ## Included assets
 

@@ -13,7 +13,7 @@ Browse the same library in your browser, through the REST API, or with MCP tools
 - **Keep a local library.** Search and filter records, view retained images/videos, and add personal notes and tags.
 - **Track counts over time.** Refresh metadata to append timestamped likes, comments, shares, favorites, and views when available. Other source metadata updates to its newest version.
 - **Use agents and scripts.** The web app, typed TypeScript client, REST API, and MCP server share one backend and library.
-- **Stay in control.** Loopback binding, browser pairing, scoped API tokens, and no default telemetry or cloud upload.
+- **Stay in control.** Localhost-only access, optional browser pairing, scoped API tokens, and no default telemetry or cloud upload.
 - **Choose your interface.** English or Simplified Chinese; light, dark, or system appearance.
 
 ## Platforms
@@ -31,8 +31,9 @@ refusals and unsupported formats. YouTube uses TypeScript/Node.js libraries and
 an isolated QuickJS WebAssembly worker, with no mandatory external downloader or
 media-processing executable.
 
-The optional watermark-free setting uses evidence from the source. It does not
-remove watermarks or visually inspect downloaded media.
+The web app always requires sources identified as watermark-free. API and MCP callers
+can choose this policy with `requireNoWatermark`. It uses evidence from the source;
+it does not remove watermarks or visually inspect downloaded media.
 
 ## Run locally
 
@@ -44,9 +45,14 @@ pnpm build
 pnpm start
 ```
 
-Open the **single-use pairing link printed in your terminal**. The app and API
-run at `http://127.0.0.1:4777`. Keep the server running while using the browser or
-MCP integration. Metadata-only saving is the default.
+Open [http://127.0.0.1:4777](http://127.0.0.1:4777/). Localhost access works
+without a pairing link or browser session by default, including after reopening
+your browser or restarting the backend. Keep the server running while using the
+app or MCP integration. Metadata-only saving is the default.
+
+To require browser pairing or an API token, start with `node dist/cli.js --require-pairing`
+or set `CLEANSAVE_REQUIRE_PAIRING=1`. The terminal then prints a single-use pairing
+link. Connections remain restricted to localhost in either mode.
 
 See the [quick-start guide](docs/quick-start.md) for installation, web app
 walkthrough, storage locations, optional network settings, and troubleshooting.
@@ -63,12 +69,13 @@ agents should check actual completion before reporting downloaded content.
 
 Follow the [step-by-step MCP setup](docs/quick-start.md#connect-an-agent-with-mcp).
 Configuration examples and optional skills are in [integrations/](integrations/).
-The default agent token grants read/write access; deleting records or exposing
-local file paths requires additional scopes.
+The stdio adapter uses a read/write token by default; its deletion and local-path
+operations need additional scopes. Credential-free local callers have full access
+when optional pairing is disabled.
 
 ## API and TypeScript client
 
-The authenticated API is available at `/api/v1`; its OpenAPI document is at
+The local API is available at `/api/v1`; its OpenAPI document is at
 `/api/v1/openapi.json`. Streamable HTTP MCP is available at `/mcp`.
 
 | Operation                   | Endpoint                                          |
@@ -93,17 +100,15 @@ The package exposes a typed client through `cleansave/client`:
 ```ts
 import { CleanSaveClient } from 'cleansave/client';
 
-const token = process.env.CLEANSAVE_TOKEN;
-if (!token) throw new Error('Set CLEANSAVE_TOKEN to your private API token.');
-
-const client = new CleanSaveClient({ baseUrl: 'http://127.0.0.1:4777', token });
+const client = new CleanSaveClient({ baseUrl: 'http://127.0.0.1:4777' });
 
 const page = await client.list({ limit: 20 });
 console.log(page.items);
 ```
 
 See [API authentication](docs/quick-start.md#api-tokens-and-permissions)
-for token handling and permissions.
+for optional token handling and permissions. Explicitly supplied tokens retain
+their configured scopes, and invalid tokens are rejected in both access modes.
 
 ## Development
 
@@ -112,7 +117,7 @@ Zod contracts, Kysely/SQLite persistence, platform resolvers, a typed client, an
 MCP integrations. Source code uses strict TypeScript, ESM, ESLint, and Prettier.
 
 ```sh
-pnpm dev                # API on 4777, frontend on 5173; use the printed pairing link
+pnpm dev                # API on 4777, frontend on 5173; open the printed local URL
 pnpm verify             # Format, lint, types, offline tests, and production build
 pnpm exec playwright install --with-deps chromium
 pnpm test:e2e           # Browser and HTTP/stdio MCP workflows with synthetic media

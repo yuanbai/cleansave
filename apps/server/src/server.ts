@@ -56,7 +56,7 @@ import {
 } from '@cleansave/resolvers';
 import { SqliteRepository, FileStore } from '@cleansave/storage';
 import { createMcpServer } from '@cleansave/mcp';
-import { Auth, type Scope } from './auth.js';
+import { Auth, isLoopbackAddress, type Scope } from './auth.js';
 
 /**
  * Backend paths and loopback configuration; resolver and media transport overrides support isolated
@@ -67,6 +67,8 @@ export interface BackendOptions {
   proxyPlatforms?: Platform[];
   browserExecutable?: string;
   root: string;
+  /** Require browser pairing or a valid bearer token; defaults to unrestricted local access. */
+  requirePairing?: boolean;
   port?: number;
   dev?: boolean;
   webRoot?: string;
@@ -116,8 +118,8 @@ export function byteRange(
 }
 
 /**
- * Create the local API, worker, storage, and authenticated MCP endpoint. The caller starts
- * listening and must close app to release library ownership.
+ * Create the loopback-only API, worker, storage, and MCP endpoint with opt-in pairing.
+ * The caller starts listening and must close app to release library ownership.
  */
 export async function createBackend(options: BackendOptions): Promise<Backend> {
   new ConnectionPolicy(options.network);
@@ -126,7 +128,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   const networkFor = (platform: Platform | null | undefined): NetworkOptions =>
     platform && proxyPlatforms.includes(platform) ? (options.network ?? {}) : {};
   const repo = await SqliteRepository.open(options.root);
-  const auth = new Auth(options.root);
+  const auth = new Auth(options.root, options.requirePairing);
   try {
     await auth.initialize();
   } catch (error) {
@@ -183,6 +185,8 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const scopes = new WeakMap<FastifyRequest, Scope[]>();
   app.addHook('onRequest', async (request) => {
+    if (!isLoopbackAddress(request.raw.socket.remoteAddress))
+      throw new AppError('local_access_only', 'Only localhost connections are allowed.', 403);
     if (!hosts.has(request.headers.host ?? ''))
       throw new AppError('invalid_host', 'Use the local CleanSave address.', 403);
     const origin = request.headers.origin;
@@ -196,6 +200,7 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
       return;
     }
     if (
+      auth.requirePairing &&
       request.method !== 'GET' &&
       request.method !== 'HEAD' &&
       !request.headers.authorization &&

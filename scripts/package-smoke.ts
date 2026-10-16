@@ -29,10 +29,11 @@ child.stderr.on('data', (chunk: Buffer) => {
 });
 const client = new Client({ name: 'isolated-package-check', version: '1' });
 try {
-  for (let attempt = 0; !output.includes('#pair=') && attempt < 100; attempt++) {
+  for (let attempt = 0; !output.includes('CleanSave is running.') && attempt < 100; attempt++) {
     if (child.exitCode !== null) throw new Error('Packaged backend exited: ' + diagnostics);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  assert.ok(!output.includes('#pair='));
   const health = await fetch('http://127.0.0.1:4791/health');
   assert.equal(health.status, 200);
   const page = await fetch('http://127.0.0.1:4791/');
@@ -42,6 +43,9 @@ try {
   assert.ok(asset);
   assert.equal((await fetch('http://127.0.0.1:4791' + asset)).status, 200);
   assert.ok(await readFile(join(dataRoot, 'library.sqlite')));
+  const records = await fetch('http://127.0.0.1:4791/api/v1/records');
+  assert.equal(records.status, 200);
+  assert.deepEqual(await records.json(), { items: [], nextCursor: null });
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,

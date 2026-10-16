@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
+import ipaddr from 'ipaddr.js';
 import { AppError } from '@cleansave/core';
 
 /**
@@ -16,21 +17,36 @@ const tokensSchema = z.array(
 );
 const digest = (token: string): string => createHash('sha256').update(token).digest('hex');
 
+/** Accept IPv4/IPv6 loopback peers, including IPv4-mapped IPv6 socket addresses. */
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  try {
+    return ipaddr.process(address).range() === 'loopback';
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Manage hashed API tokens and process-local browser sessions with one-use, five-minute pairing.
+ * Allow trusted local access by default; optionally require scoped tokens or browser pairing.
  */
 export class Auth {
-  /** One-use secret for pairing a local browser within five minutes of construction. */
-  public readonly pairingSecret = randomBytes(24).toString('base64url');
+  /** One-use, five-minute browser secret; null unless pairing was explicitly enabled. */
+  public readonly pairingSecret: string | null;
   private readonly expiresAt = Date.now() + 5 * 60 * 1000;
   private paired = false;
   private readonly sessions = new Map<string, number>();
 
   /**
-   * Use the library data root for private credential files; pairing state belongs to this process
-   * only.
+   * Use private credentials under the library root. Pairing is opt-in and process-local;
+   * the HTTP transport must verify loopback peers before authorizing requests.
    */
-  constructor(private readonly root: string) {}
+  constructor(
+    private readonly root: string,
+    public readonly requirePairing = false,
+  ) {
+    this.pairingSecret = requirePairing ? randomBytes(24).toString('base64url') : null;
+  }
 
   /**
    * Create private credential storage and mint the default read/write token only for a new library.
@@ -70,6 +86,8 @@ export class Auth {
 
   /** Exchange the unexpired, one-use pairing secret for a process-local browser session. */
   public pair(secret: string): string {
+    if (!this.pairingSecret)
+      throw new AppError('pairing_disabled', 'Browser pairing is not enabled.', 409);
     if (
       this.paired ||
       Date.now() > this.expiresAt ||
@@ -87,21 +105,23 @@ export class Auth {
   }
 
   /**
-   * Resolve a valid bearer token or unexpired browser session into granted scopes; otherwise throw
-   * unauthorized.
+   * Honor explicitly supplied tokens and reject invalid ones. Without a token, grant local
+   * access by default or require a paired session when pairing is enabled.
    */
   public async authorize(
     bearer: string | undefined,
     session: string | undefined,
   ): Promise<Scope[]> {
-    if (bearer?.startsWith('Bearer ')) {
-      const tokenHash = digest(bearer.slice(7));
+    if (bearer !== undefined) {
+      const tokenHash = bearer.startsWith('Bearer ') ? digest(bearer.slice(7)) : null;
       const entries = tokensSchema.parse(
         JSON.parse(await readFile(join(this.root, 'credentials', 'access.json'), 'utf8')),
       );
       const entry = entries.find((value) => value.hash === tokenHash);
       if (entry) return entry.scopes;
+      throw new AppError('unauthorized', 'The supplied API token is invalid or revoked.', 401);
     }
+    if (!this.requirePairing) return [...scopeSchema.options];
     if (session && (this.sessions.get(session) ?? 0) > Date.now())
       return ['read', 'write', 'delete', 'local_path'];
     throw new AppError('unauthorized', 'Pair this browser or provide a local API token.', 401);
