@@ -42,6 +42,9 @@ playwright-report/
 test-results/
 coverage/
 .test-runtime.json
+service.json
+service-*.tmp
+service-start.lock/
 integrations/plugin/skills/
 
 # Logs and operating-system files

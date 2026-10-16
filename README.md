@@ -6,6 +6,17 @@ Browse the same library in your browser, through the REST API, or with MCP tools
 
 [Quick start](docs/quick-start.md) · [Agent integrations](docs/quick-start.md#connect-an-agent-with-mcp) · [Contributing](AGENTS.md) · [MIT license](LICENSE)
 
+## Install with your agent
+
+Paste this into a local AI agent with terminal access, such as Codex, Claude Code,
+Hermes, or OpenClaw:
+
+> Read https://raw.githubusercontent.com/yuanbai/cleansave/main/integrations/skills/cleansave-setup/SKILL.md and follow it to install and run CleanSave locally, then register its MCP server for my user account in this agent.
+
+The [setup skill](integrations/skills/cleansave-setup/SKILL.md) starts a background
+service without login or reboot autostart; client reloads and prerequisites are
+covered in the [quick-start guide](docs/quick-start.md#install-with-an-agent).
+
 ## Features
 
 - **Save links and share messages.** Choose the intended link when a message contains several.
@@ -49,6 +60,10 @@ Open [http://127.0.0.1:4777](http://127.0.0.1:4777/). Localhost access works
 without a pairing link or browser session by default, including after reopening
 your browser or restarting the backend. Keep the server running while using the
 app or MCP integration. Metadata-only saving is the default.
+
+For background operation after building, use `node dist/cli.js service start`.
+`node dist/cli.js service status --verify-mcp` checks the service and MCP connection;
+`node dist/cli.js service stop` stops its backend. Start it again after reboot.
 
 To require browser pairing or an API token, start with `node dist/cli.js --require-pairing`
 or set `CLEANSAVE_REQUIRE_PAIRING=1`. The terminal then prints a single-use pairing

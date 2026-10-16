@@ -12,13 +12,14 @@ scopes. Credential-free localhost requests have full access by default. Enable
 
 ## Included assets
 
-| Path                                                                   | Purpose                                                                                                            |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [`codex/config.example.toml`](codex/config.example.toml)               | Codex stdio configuration template.                                                                                |
-| [`generic/mcp.json`](generic/mcp.json)                                 | Generic MCP client configuration template.                                                                         |
-| [`skills/cleansave-save-media/`](skills/cleansave-save-media/)         | Guidance for saving, downloading, and refreshing records.                                                          |
-| [`skills/cleansave-browse-library/`](skills/cleansave-browse-library/) | Guidance for browsing records, retained media, and count history.                                                  |
-| `plugin/`                                                              | Optional compatibility manifests and MCP configuration; `pnpm build` copies the canonical skills into this bundle. |
+| Path                                                                   | Purpose                                                                                                                             |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [`codex/config.example.toml`](codex/config.example.toml)               | Codex stdio configuration template.                                                                                                 |
+| [`generic/mcp.json`](generic/mcp.json)                                 | Generic MCP client configuration template.                                                                                          |
+| [`skills/cleansave-setup/`](skills/cleansave-setup/)                   | One-prompt installation, managed background service, and user-scoped MCP registration for Codex, Claude Code, Hermes, and OpenClaw. |
+| [`skills/cleansave-save-media/`](skills/cleansave-save-media/)         | Guidance for saving, downloading, and refreshing records.                                                                           |
+| [`skills/cleansave-browse-library/`](skills/cleansave-browse-library/) | Guidance for browsing records, retained media, and count history.                                                                   |
+| `plugin/`                                                              | Optional compatibility manifests and MCP configuration; `pnpm build` copies the canonical skills into this bundle.                  |
 
 Replace example paths with absolute paths. For a custom port, pass
 `--base-url http://127.0.0.1:PORT`. `CLEANSAVE_URL` and `CLEANSAVE_TOKEN` are

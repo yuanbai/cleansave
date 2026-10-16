@@ -4,6 +4,8 @@ This guide takes you from a source checkout to a working local library, then
 connects an AI agent to that same library over MCP.
 
 - [Install and run](#install-and-run)
+- [Install with an agent](#install-with-an-agent)
+- [Run in the background](#run-in-the-background)
 - [Use the web app](#use-the-web-app)
 - [Connect an agent with MCP](#connect-an-agent-with-mcp)
 - [API tokens and permissions](#api-tokens-and-permissions)
@@ -27,11 +29,11 @@ The version output should start with `v24.` for Node and be `11.25.0` for pnpm.
 
 ### 2. Get the source and build it
 
-Clone this repository using the URL from GitHub's **Code** menu, or download and
-extract its source ZIP. Open a terminal in the `cleansave` directory containing
-`package.json`, then run:
+Clone the public repository, then build it:
 
 ```sh
+git clone https://github.com/yuanbai/cleansave.git
+cd cleansave
 pnpm install --frozen-lockfile
 pnpm build
 ```
@@ -76,6 +78,77 @@ separate library, and only one backend may own a library at a time.
 To back up a library, stop the backend and copy the **entire data directory**,
 including SQLite, record files, and credentials. Keep that backup private. Restore
 it with the backend stopped, then start with the restored directory.
+
+## Install with an agent
+
+Paste this into Codex, Claude Code, Hermes, OpenClaw, or another local agent with
+terminal access:
+
+> Read https://raw.githubusercontent.com/yuanbai/cleansave/main/integrations/skills/cleansave-setup/SKILL.md and follow it to install and run CleanSave locally, then register its MCP server for my user account in this agent.
+
+The [setup skill](../integrations/skills/cleansave-setup/SKILL.md) guides the agent
+through cloning, prerequisite checks, a locked install and production build,
+background startup, and user-scoped MCP registration. It reuses existing matching
+installations and preserves libraries and other MCP servers. It needs Git,
+Node 24, the pinned pnpm, network access for installation, and permission to run
+local commands. A cloud-only sandbox cannot install on your computer.
+
+The agent returns the actual browser URL, installation/library paths, service
+commands, and whether MCP registration and tool calls were verified. You may
+need to reload your agent or start a new session to load the tools. OpenClaw's
+running Gateway can prevent native registry changes; the skill preserves the
+conversation and reports the remaining registration step if a live change is
+unavailable. Hermes/OpenClaw instructions follow their current native MCP CLIs;
+check the installed version's help.
+
+This flow does not install login or reboot autostart, alter global Node defaults,
+import browser cookies, or download media during setup.
+
+## Run in the background
+
+After building, use these commands from the checkout:
+
+```sh
+node dist/cli.js service start
+node dist/cli.js service status --verify-mcp
+node dist/cli.js service stop
+```
+
+The start command returns after a detached backend is ready. It keeps running
+after the terminal or setup agent exits. Starting it again reuses the same managed
+backend. `service stop` closes jobs and SQLite before releasing library ownership;
+it retains all saved records and files. After reboot, run `service start` again.
+No OS service, login item, or scheduler is installed.
+
+All three commands return JSON. Status includes the actual URL, library path,
+private `service.log` location, and the absolute token-free `mcp` command and
+arguments to use in your client. `--verify-mcp` performs real, read-only
+`get_capabilities` and `list_records` calls through that stdio command.
+
+For a custom library/port:
+
+```sh
+node dist/cli.js service start --data-dir "/absolute/library" --port 4888
+node dist/cli.js service status --data-dir "/absolute/library" --verify-mcp
+node dist/cli.js service stop --data-dir "/absolute/library"
+```
+
+Use absolute Node and CLI paths when invoking outside the checkout. Pass optional
+proxy/browser flags on start just as for foreground operation. To change startup
+options, stop the managed backend first, then start it with the desired options.
+Existing starts are reused, not reconfigured. With pairing enabled, background logs
+omit the browser pairing secret; use a foreground start for a fresh browser pairing
+link. MCP still reads its own token file in either mode.
+
+Service controls verify a private instance identity before stopping anything.
+An existing foreground server or unrelated port occupant is not stopped or adopted;
+stop that server in its own terminal or choose a free port. An unreachable managed
+service is reported for inspection rather than killed by a saved PID. Keep
+`service.json` and logs private; they are runtime files, not source files.
+
+Before updating an installation, stop its backend, preserve any local source
+changes, then update, install with the frozen lockfile, build, and start again.
+Keep the same library path. Service startup does not fetch updates automatically.
 
 ## Use the web app
 
@@ -185,8 +258,15 @@ backslashes (`C:\\path\\node.exe`) or forward slashes (`C:/path/node.exe`).
 
 ### 3. Configure Codex
 
-Add this entry to your personal `~/.codex/config.toml`. Use a project-scoped
-`.codex/config.toml` instead if you want it limited to a trusted project:
+Register for your user account with the native CLI, using the actual paths:
+
+```sh
+codex mcp add cleansave -- "/absolute/path/to/node" "/absolute/path/to/cleansave/dist/cli.js" mcp --base-url http://127.0.0.1:4777 --data-dir "/absolute/library"
+```
+
+This preserves other servers in your personal configuration. If configuring
+manually instead, merge this entry into `~/.codex/config.toml` (or the active
+`CODEX_HOME` equivalent):
 
 ```toml
 [mcp_servers.cleansave]
@@ -205,15 +285,15 @@ for configuration locations and client setup.
 
 ### 4. Configure Claude Code
 
-From the project where you want CleanSave available, run the following command
-with your actual absolute paths:
+Register for your user account with your actual absolute paths:
 
 ```sh
-claude mcp add --transport stdio --scope local cleansave -- "/absolute/path/to/node" "/absolute/path/to/cleansave/dist/cli.js" mcp --base-url http://127.0.0.1:4777
+claude mcp add --transport stdio --scope user cleansave -- "/absolute/path/to/node" "/absolute/path/to/cleansave/dist/cli.js" mcp --base-url http://127.0.0.1:4777 --data-dir "/absolute/library"
 ```
 
-For a custom library, append `--data-dir "/absolute/path/to/cleansave-library"`.
-Local scope keeps this entry private to you for that project. Restart the session,
+Use the same data directory as the backend. User scope makes the server available
+across your projects, normally through `~/.claude.json`; the default `local` scope
+would restrict it to the current project. Reload or restart the session,
 run `claude mcp get cleansave`, and use `/mcp` inside Claude Code to check connection
 status. See the [official Claude Code MCP guide](https://code.claude.com/docs/en/mcp)
 for scopes and troubleshooting.
@@ -241,6 +321,11 @@ Merge an entry like this into your client's MCP configuration:
 Add the matching `--data-dir` arguments for a custom library. Configuration file
 locations vary by client. Templates are also available in
 [`integrations/`](../integrations/).
+
+For Hermes and OpenClaw, the setup skill includes focused instructions for their
+[Hermes](../integrations/skills/cleansave-setup/references/hermes.md) and
+[OpenClaw](../integrations/skills/cleansave-setup/references/openclaw.md) native
+user-level registries. Preserve the selected profile and other entries.
 
 ### 6. Verify the connection and use the tools
 
@@ -397,6 +482,8 @@ configuration.
 | Browser asks you to connect                    | Pairing is opt-in. If enabled, use the current terminal link or restart for a fresh one. For default access, restart without `--require-pairing` and unset `CLEANSAVE_REQUIRE_PAIRING`.        |
 | Port is in use                                 | Stop the other service or choose a different `--port`; update the MCP base URL too.                                                                                                            |
 | Another backend owns the library               | Keep only one backend for that data directory. MCP must run the `mcp` command, not `start`.                                                                                                    |
+| Service is unreachable                         | Inspect the private log and instance state. Service controls refuse to stop a process whose identity cannot be verified; do not kill a PID copied from stale state.                            |
+| MCP stopped working after reboot               | Run `service start` with the original library and port. Background mode does not install reboot autostart.                                                                                     |
 | MCP cannot find Node or the script             | Use the absolute paths from step 2, build first, and restart the client.                                                                                                                       |
 | MCP cannot connect                             | Keep the backend running and check the matching base URL/port. `GET /health` should return `{"status":"ok"}`.                                                                                  |
 | MCP reports unauthorized                       | Check that it uses the same data directory, the token was not revoked, and no stale `CLEANSAVE_TOKEN` overrides the file.                                                                      |

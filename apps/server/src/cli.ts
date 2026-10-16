@@ -10,6 +10,15 @@ import { z } from 'zod';
 import { platformSchema } from '@cleansave/contracts';
 import { createBackend } from './server.js';
 import { Auth, scopeSchema } from './auth.js';
+import {
+  ServiceError,
+  managedLaunch,
+  serveControl,
+  serviceStatus,
+  startService,
+  stopService,
+  verifyServiceMcp,
+} from './service.js';
 
 /** Choose the platform-specific per-user data directory, honoring XDG_DATA_HOME or LOCALAPPDATA. */
 export function defaultDataRoot(): string {
@@ -37,16 +46,41 @@ export async function main(): Promise<void> {
       scopes: { type: 'string', default: 'read,write' },
       name: { type: 'string', default: 'agent' },
       help: { type: 'boolean' },
+      'verify-mcp': { type: 'boolean' },
+      'managed-service': { type: 'boolean' },
     },
   });
   if (values.help) {
     process.stdout.write(
-      'CleanSave: cleansave [start|mcp|token|revoke] [--data-dir PATH] [--port 4777]\nLocalhost access needs no pairing by default. Enable it with --require-pairing or CLEANSAVE_REQUIRE_PAIRING=1.\nMCP connects to the running backend; token accepts --name and --scopes.\nOptional: --proxy http://127.0.0.1:PORT --proxy-platforms youtube,tiktok --browser-executable PATH\n',
+      'CleanSave: cleansave [start|mcp|token|revoke] [--data-dir PATH] [--port 4777]\nBackground: cleansave service [start|status|stop] [--data-dir PATH] [--port 4777]\nService commands return JSON. Use service status --verify-mcp for read-only MCP checks.\nBackground startup does not install login or reboot autostart.\nLocalhost access needs no pairing by default. Enable it with --require-pairing or CLEANSAVE_REQUIRE_PAIRING=1.\nMCP connects to the running backend; token accepts --name and --scopes.\nOptional: --proxy http://127.0.0.1:PORT --proxy-platforms youtube,tiktok --browser-executable PATH\n',
     );
     return;
   }
   const command = positionals[0] ?? 'start';
   const root = resolve(values['data-dir'] ?? process.env.CLEANSAVE_DATA_DIR ?? defaultDataRoot());
+  if (command === 'service') {
+    const action = positionals[1];
+    let status;
+    if (action === 'start') {
+      if (values.dev || values['managed-service'])
+        throw new ServiceError('Service startup uses the production build. Run pnpm build first.');
+      const args: string[] = [];
+      for (const key of ['proxy', 'proxy-platforms', 'browser-executable'] as const)
+        if (values[key] !== undefined) args.push('--' + key, values[key]);
+      if (values['require-pairing']) args.push('--require-pairing');
+      status = await startService({
+        root,
+        port: z.coerce.number().int().min(1024).max(65535).parse(values.port),
+        cli: fileURLToPath(import.meta.url),
+        args,
+      });
+    } else if (action === 'status') status = await serviceStatus(root);
+    else if (action === 'stop') status = await stopService(root);
+    else throw new ServiceError('Use cleansave service start, status, or stop.');
+    if (values['verify-mcp']) status = await verifyServiceMcp(status);
+    process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+    return;
+  }
   if (command === 'mcp') {
     const token =
       process.env.CLEANSAVE_TOKEN ??
@@ -71,6 +105,7 @@ export async function main(): Promise<void> {
     return;
   }
   if (command !== 'start') throw new Error('Unknown command. Run cleansave --help.');
+  const managed = values['managed-service'] ? await managedLaunch(root) : null;
   const port = z.coerce.number().int().min(1024).max(65535).parse(values.port);
   const packedWeb = fileURLToPath(new URL('./web', import.meta.url));
   const sourceWeb = fileURLToPath(new URL('../../web/dist', import.meta.url));
@@ -103,18 +138,28 @@ export async function main(): Promise<void> {
         ? { webRoot: sourceWeb }
         : {}),
   });
-  await backend.app.listen({ host: '127.0.0.1', port });
+  try {
+    await backend.app.listen({ host: '127.0.0.1', port });
+  } catch (error) {
+    await backend.app.close();
+    throw error;
+  }
   const uiPort = values.dev ? 5173 : port;
   const url = `http://127.0.0.1:${uiPort}/`;
   process.stdout.write(
-    backend.auth.pairingSecret
+    backend.auth.pairingSecret && !managed
       ? `CleanSave is running. Open this single-use pairing link:\n${url}#pair=${backend.auth.pairingSecret}\nData: ${root}\n`
-      : `CleanSave is running. Open:\n${url}\nLocalhost access: pairing disabled.\nData: ${root}\n`,
+      : `CleanSave is running. Open:\n${url}\nLocalhost access: pairing ${backend.auth.requirePairing ? 'enabled' : 'disabled'}.\nData: ${root}\n`,
   );
+  let disposeControl: (() => Promise<void>) | undefined;
+  let closing = false;
   const stop = (): void => {
+    if (closing) return;
+    closing = true;
     void backend.app
       .close()
-      .then(() => {
+      .then(async () => {
+        await disposeControl?.();
         process.exitCode = 0;
       })
       .catch(() => {
@@ -123,14 +168,25 @@ export async function main(): Promise<void> {
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  if (managed) {
+    try {
+      disposeControl = await serveControl(root, managed, stop);
+    } catch (error) {
+      await backend.app.close();
+      throw error;
+    }
+  }
 }
 if (
   process.argv[1] &&
   realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
 )
-  void main().catch(() => {
+  void main().catch((error: unknown) => {
     process.stderr.write(
-      'CleanSave could not start. Check the data directory, port and running backend.\n',
+      (error instanceof ServiceError
+        ? error.message
+        : 'CleanSave could not start. Check the data directory, port and running backend.') + '\n',
     );
+    if (process.connected) process.disconnect();
     process.exitCode = 1;
   });
