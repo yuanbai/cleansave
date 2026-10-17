@@ -13,6 +13,7 @@ import {
   recordPageSchema,
   recordSchema,
   serviceStatusSchema,
+  storageUsageSchema,
   type ServiceStatusDto,
 } from '@cleansave/contracts';
 import { CleanSaveClient, mediaDescriptorSchema, type ToolService } from '@cleansave/client';
@@ -285,6 +286,17 @@ export function createMcpServer(service: ToolService, control?: ServiceControl):
       annotations: { ...write, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ id }) => result(await service.deleteRecord(id)),
+  );
+  server.registerTool(
+    'get_storage_usage',
+    {
+      description:
+        'Read total completed download size in bytes (downloadBytes) and file count (downloadedFiles) across the library. Excludes metadata, staging files, and files marked missing. Requires read access; never starts a download.',
+      inputSchema: z.object({}).strict(),
+      outputSchema: storageUsageSchema,
+      annotations: read,
+    },
+    async () => result(await service.storageUsage()),
   );
   server.registerTool(
     'get_capabilities',

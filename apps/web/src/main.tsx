@@ -150,7 +150,7 @@ function App(): ReactNode {
     const invalidate = (): void => {
       void queryClient.invalidateQueries({
         predicate: (query) =>
-          ['records', 'record', 'jobs', 'history'].includes(String(query.queryKey[0])),
+          ['records', 'record', 'jobs', 'history', 'storage'].includes(String(query.queryKey[0])),
       });
     };
     events.addEventListener('changed', invalidate);
@@ -1306,6 +1306,11 @@ function Preferences({ t, settings }: { t: Translate; settings: Settings }): Rea
   }
 
   const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: () => api.capabilities() });
+  const storage = useQuery({
+    queryKey: ['storage'],
+    queryFn: () => api.storageUsage(),
+    refetchInterval: 5000,
+  });
   return (
     <div className={s.preferences}>
       <h1>{t('settings')}</h1>
@@ -1358,6 +1363,30 @@ function Preferences({ t, settings }: { t: Translate; settings: Settings }): Rea
           {t('download')}
         </label>
         <ErrorNotice error={mutation.error} />
+      </section>
+      <section className={s.panel} aria-labelledby="storage-heading">
+        <h2 id="storage-heading">{t('storage')}</h2>
+        <ErrorNotice error={storage.error} />
+        {storage.isPending && <p>{t('loading')}</p>}
+        {storage.data && (
+          <div className={s.metricGrid}>
+            <div>
+              <small>{t('downloadedMedia')}</small>
+              <strong>
+                <output aria-label={t('downloadedMedia')}>
+                  {formatBytes(storage.data.downloadBytes)}
+                </output>
+              </strong>
+            </div>
+            <div>
+              <small>{t('downloadedFiles')}</small>
+              <strong>
+                <output aria-label={t('downloadedFiles')}>{storage.data.downloadedFiles}</output>
+              </strong>
+            </div>
+          </div>
+        )}
+        <p className={s.helper}>{t('storageHint')}</p>
       </section>
       <section className={s.panel}>
         <h2>{t('capabilities')}</h2>

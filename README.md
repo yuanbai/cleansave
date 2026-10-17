@@ -26,6 +26,7 @@ covered in the [quick-start guide](docs/quick-start.md#install-with-an-agent).
 - **Use agents and scripts.** The web app, typed TypeScript client, REST API, and MCP server share one backend and library.
 - **Stay in control.** Localhost-only access, optional browser pairing, scoped API tokens, and no default telemetry or cloud upload.
 - **Choose your interface.** English or Simplified Chinese; light, dark, or system appearance.
+- **Check download storage.** Settings shows the total size and file count of completed downloads.
 
 ## Platforms
 
@@ -80,8 +81,13 @@ clients. It connects to the running backend and reads a private token from the
 same library directory. Library operations use that backend; the adapter never opens the database.
 
 Tools include `save_media`, `list_records`, `get_record`, `download_record`,
-`refresh_metadata`, `list_count_history`, and `get_media`. Saving returns job IDs;
+`refresh_metadata`, `list_count_history`, `get_media`, and `get_storage_usage`. Saving returns job IDs;
 agents should check actual completion before reporting downloaded content.
+
+`get_storage_usage` takes no arguments and requires read access. It returns
+`downloadBytes` (total completed download size in bytes) and `downloadedFiles`
+(file count), using the same totals as Settings. Metadata, temporary files, and
+files marked missing are excluded.
 
 Follow the [step-by-step MCP setup](docs/quick-start.md#connect-an-agent-with-mcp).
 Configuration examples and optional skills are in [integrations/](integrations/).
@@ -109,6 +115,7 @@ The local API is available at `/api/v1`; its OpenAPI document is at
 | Download missing media      | `POST /api/v1/records/:id/downloads`              |
 | Inspect a job               | `GET /api/v1/jobs/:id`                            |
 | Read a retained file        | `GET /api/v1/assets/:id/content`                  |
+| Read download storage usage | `GET /api/v1/storage`                             |
 
 Both `downloadContent` and `requireNoWatermark` default to `false` when creating a
 record. Download retries preserve captured metadata, count history, and completed

@@ -28,6 +28,7 @@ import {
   recordPageSchema,
   recordSchema,
   recordSummarySchema,
+  storageUsageSchema,
   type Accepted,
   type Platform,
   type RecordDto,
@@ -323,6 +324,10 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
             }),
           ),
         };
+      },
+      storageUsage: async () => {
+        check('read');
+        return repo.storageUsage();
       },
       history: async (id, input) => {
         await get(id);
@@ -625,6 +630,9 @@ export async function createBackend(options: BackendOptions): Promise<Backend> {
     requireScope(scopes.get(request) ?? [], 'read');
     return app.swagger();
   });
+  app.get('/api/v1/storage', { schema: { response: { 200: storageUsageSchema } } }, (request) =>
+    forRequest(request).storageUsage(),
+  );
   const loadSettings = async (): Promise<z.infer<typeof settingsSchema>> => {
     try {
       return settingsSchema.parse(

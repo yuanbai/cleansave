@@ -259,6 +259,9 @@ pastes add no count observations. Refreshing metadata does not download media.
 - Open **Settings** to choose English/Simplified Chinese, appearance, and defaults
   for new records. Appearance, language, and the **Download content** default apply
   and save immediately when changed.
+- **Settings → Storage** shows the total size and file count of completed downloads
+  across the library. It updates automatically after downloads and removal; metadata,
+  temporary files, and files marked missing are excluded.
 - **Export metadata** saves the current public record as JSON.
 - **Download content** lists retained files with their size, format, and verification
   details. **Remove downloads** appears there when downloaded files exist.
@@ -386,11 +389,18 @@ For downloads, ask explicitly:
 
 Useful tools:
 
+Ask “How much storage do my CleanSave downloads use?” to call the read-only
+`get_storage_usage` tool with no arguments. It returns `downloadBytes` in bytes
+and `downloadedFiles` as a file count, using the same totals as Settings. Metadata,
+temporary files, and files marked missing are excluded. The tool is available over
+both stdio and HTTP MCP; reconnect an existing MCP client after upgrading to load it.
+
 | Tool                                               | Purpose                                                                             |
 | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `inspect_input`                                    | Identify supported links without networking.                                        |
 | `save_media`                                       | Save/reuse a record; returns record and job IDs.                                    |
 | `get_job`                                          | Check progress, terminal status, and errors.                                        |
+| `get_storage_usage`                                | Read total completed download size in bytes and file count; requires read access.   |
 | `list_records`, `get_record`                       | Browse summaries and read full records.                                             |
 | `download_record`                                  | Download missing media with an optional watermark policy.                           |
 | `refresh_metadata`, `list_count_history`           | Capture a new observation and inspect the time series.                              |

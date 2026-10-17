@@ -95,6 +95,13 @@ export const messages = {
   themeDark: ['Dark', '深色'],
   language: ['Language', '语言'],
   defaults: ['New record defaults', '新记录默认选项'],
+  storage: ['Storage', '存储空间'],
+  downloadedMedia: ['Downloaded media', '已下载媒体'],
+  downloadedFiles: ['Downloaded files', '已下载文件数'],
+  storageHint: [
+    'Completed downloads only. Excludes metadata and temporary files.',
+    '仅统计已完成的下载，不含元数据和临时文件。',
+  ],
   capabilities: ['Platform capabilities', '平台能力'],
   agentSetup: ['Agent setup', 'Agent 配置'],
   agentHint: [

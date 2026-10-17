@@ -18,6 +18,15 @@ export const serviceStatusSchema = z.object({
 /** A local service lifecycle result suitable for scoped MCP callers. */
 export type ServiceStatusDto = z.infer<typeof serviceStatusSchema>;
 
+/** Completed retained-media totals; excludes metadata, staging files, and missing receipts. */
+export const storageUsageSchema = z.object({
+  downloadBytes: z.number().int().nonnegative(),
+  downloadedFiles: z.number().int().nonnegative(),
+});
+
+/** Library-wide downloaded media size and file count, independent of list filters/pagination. */
+export type StorageUsage = z.infer<typeof storageUsageSchema>;
+
 /** Stable display and iteration order for engagement metrics. */
 export const metricNames = ['likes', 'comments', 'shares', 'favorites', 'views'] as const;
 

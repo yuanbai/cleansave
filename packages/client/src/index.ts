@@ -10,12 +10,14 @@ import {
   recordPageSchema,
   recordSchema,
   safeErrorSchema,
+  storageUsageSchema,
   type Accepted,
   type Candidate,
   type CountCapture,
   type CreateInput,
   type JobDto,
   type RecordDto,
+  type StorageUsage,
 } from '@cleansave/contracts';
 
 /**
@@ -278,6 +280,11 @@ export class CleanSaveClient {
     return this.request('/api/v1/capabilities', capabilitiesSchema);
   }
 
+  /** Read completed download totals for the whole library; never starts a media download. */
+  public async storageUsage(): Promise<StorageUsage> {
+    return this.request('/api/v1/storage', storageUsageSchema);
+  }
+
   /** Read persisted frontend preferences and new-record defaults. */
   public async settings(): Promise<Settings> {
     return this.request('/api/v1/settings', settingsSchema);
@@ -341,6 +348,9 @@ export interface ToolService {
 
   /** Browse filtered record summaries with a cursor bound to the query and ordering. */
   list(input?: z.input<typeof listSchema>): Promise<z.infer<typeof recordPageSchema>>;
+
+  /** Read library-wide completed download bytes and file count; requires read access. */
+  storageUsage(): Promise<StorageUsage>;
 
   /** Page immutable count observations within an inclusive-from, exclusive-to time window. */
   history(

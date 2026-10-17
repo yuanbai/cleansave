@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { rm, readFile } from 'node:fs/promises';
+import { mkdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { AppError } from '@cleansave/core';
-import { historySchema, listSchema } from '@cleansave/contracts';
+import { historySchema, listSchema, storageUsageSchema } from '@cleansave/contracts';
 import { fixtureBackend, capture, image } from './helpers.js';
 const instances: Awaited<ReturnType<typeof fixtureBackend>>[] = [];
 it('reports media HTTP 403 without retaining response bytes or inventing count captures', async () => {
@@ -34,6 +35,106 @@ async function fixture(...args: Parameters<typeof fixtureBackend>) {
   instances.push(result);
   return result;
 }
+describe('download storage totals', () => {
+  it('counts retained files across records and partial albums, excluding missing and removed files', async () => {
+    let failSecond = true;
+    const b = await fixture(
+      {
+        resolve: async (url) =>
+          capture({ id: new URL(url).pathname.split('/').at(-1) ?? '12345', items: 2 }),
+      },
+      {
+        fetchMedia: async (url) => ({
+          url,
+          status: 200,
+          headers: {},
+          body: Readable.from(url.endsWith('/1') && failSecond ? '<html>no media</html>' : image),
+        }),
+      },
+    );
+    const usage = async () => {
+      const response = await b.app.inject({ url: '/api/v1/storage', headers: b.headers });
+      expect(response.statusCode).toBe(200);
+      return storageUsageSchema.parse(response.json());
+    };
+    expect(await usage()).toEqual({ downloadBytes: 0, downloadedFiles: 0 });
+    await b.save();
+    await b.settled();
+    expect(await usage()).toEqual({ downloadBytes: 0, downloadedFiles: 0 });
+    const ids: string[] = [];
+    for (const postId of ['3001', '3002']) {
+      const saved = await b.save(true, false, 'https://www.douyin.com/video/' + postId);
+      ids.push(saved.recordId);
+      await b.settled();
+      expect((await b.repo.get(saved.recordId)).downloadState).toBe('partial');
+    }
+    await mkdir(join(b.root, 'staging'), { recursive: true });
+    await writeFile(join(b.root, 'staging', 'unfinished.part'), Buffer.alloc(1024));
+    expect(await usage()).toEqual({ downloadBytes: image.length * 2, downloadedFiles: 2 });
+    failSecond = false;
+    for (const id of ids) {
+      await b.app.inject({
+        method: 'POST',
+        url: `/api/v1/records/${id}/downloads`,
+        headers: b.headers,
+        payload: {},
+      });
+    }
+    await b.settled();
+    expect(await usage()).toEqual({ downloadBytes: image.length * 4, downloadedFiles: 4 });
+    await b.save(true, false, 'https://www.douyin.com/video/3001');
+    await b.settled();
+    expect(await usage()).toEqual({ downloadBytes: image.length * 4, downloadedFiles: 4 });
+    const firstId = ids[0];
+    const secondId = ids[1];
+    if (!firstId || !secondId) throw new Error('Missing storage fixtures');
+    const record = await b.repo.get(firstId);
+    await b.repo.mutate(firstId, record.generation, (current) => ({
+      ...current,
+      assets: current.assets.map((asset, index) =>
+        index === 0 ? { ...asset, state: 'missing_on_disk' } : asset,
+      ),
+    }));
+    expect(await usage()).toEqual({ downloadBytes: image.length * 3, downloadedFiles: 3 });
+    expect(
+      (
+        await b.app.inject({
+          method: 'DELETE',
+          url: `/api/v1/records/${firstId}/downloads`,
+          headers: { host: '127.0.0.1:4777' },
+        })
+      ).statusCode,
+    ).toBe(202);
+    await b.settled();
+    expect(await usage()).toEqual({ downloadBytes: image.length * 2, downloadedFiles: 2 });
+    await b.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/records/${secondId}`,
+      headers: { host: '127.0.0.1:4777' },
+    });
+    await b.settled();
+    expect(await usage()).toEqual({ downloadBytes: 0, downloadedFiles: 0 });
+  });
+
+  it('requires read permission for storage totals when pairing is enabled', async () => {
+    const b = await fixture(undefined, { requirePairing: true });
+    const headers = { host: '127.0.0.1:4777' };
+    expect((await b.app.inject({ url: '/api/v1/storage', headers })).statusCode).toBe(401);
+    const token = await b.auth.mint('storage-writer', ['write']);
+    expect(
+      (
+        await b.app.inject({
+          url: '/api/v1/storage',
+          headers: { ...headers, authorization: 'Bearer ' + token },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect((await b.app.inject({ url: '/api/v1/storage', headers: b.headers })).statusCode).toBe(
+      200,
+    );
+  });
+});
+
 describe('capture and library lifecycle', () => {
   it('saves metadata without media network access; reuses identical pastes and idempotency keys', async () => {
     let calls = 0;

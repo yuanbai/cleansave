@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { acceptedSchema, recordSchema } from '@cleansave/contracts';
 import { settingsSchema } from '@cleansave/client';
 import { AppError } from '@cleansave/core';
-import { capture, fixtureBackend } from './helpers.js';
+import { capture, fixtureBackend, image } from './helpers.js';
 
 test('library, add options/ambiguity, duplicate reuse, refresh counts and protected draft', async ({
   page,
@@ -247,6 +247,46 @@ test('all preferences apply immediately, persist and recover from save failures'
   await page.goto('/add');
   await expect(page.getByRole('checkbox')).not.toBeChecked();
   await page.request.patch('/api/v1/settings', { data: settingsSchema.parse({}) });
+});
+
+test('settings storage updates after downloads and removal and follows the selected language', async ({
+  page,
+}) => {
+  const backend = await fixtureBackend(undefined, { port: 4794, webRoot: resolve('dist/web') });
+  const base = 'http://127.0.0.1:4794';
+  try {
+    await backend.app.listen({ host: '127.0.0.1', port: 4794 });
+    await page.goto(base + '/settings');
+    const storage = page.getByRole('region', { name: 'Storage', exact: true });
+    await expect(storage.getByLabel('Downloaded media', { exact: true })).toHaveText('0 B');
+    await expect(storage.getByLabel('Downloaded files', { exact: true })).toHaveText('0');
+    // Download through a separate client while Settings stays open. SSE invalidation should
+    // update the total without navigating, reloading, or changing any preferences.
+    const saved = acceptedSchema.parse(
+      await (
+        await page.request.post(base + '/api/v1/records', {
+          data: { input: 'https://www.douyin.com/video/12345', downloadContent: true },
+        })
+      ).json(),
+    );
+    await expect(storage.getByLabel('Downloaded media', { exact: true })).toHaveText(
+      image.length + ' B',
+    );
+    await expect(storage.getByLabel('Downloaded files', { exact: true })).toHaveText('1');
+    const removed = await page.request.delete(base + `/api/v1/records/${saved.recordId}/downloads`);
+    expect(removed.status()).toBe(202);
+    await expect(storage.getByLabel('Downloaded media', { exact: true })).toHaveText('0 B');
+    await expect(storage.getByLabel('Downloaded files', { exact: true })).toHaveText('0');
+    await page.getByLabel('Language', { exact: true }).selectOption('zh-CN');
+    const localized = page.getByRole('region', { name: '存储空间', exact: true });
+    await expect(localized.getByLabel('已下载媒体', { exact: true })).toHaveText('0 B');
+    await expect(localized.getByLabel('已下载文件数', { exact: true })).toHaveText('0');
+    await page.reload();
+    await expect(localized.getByLabel('已下载媒体', { exact: true })).toHaveText('0 B');
+  } finally {
+    await backend.app.close();
+    await rm(backend.root, { recursive: true, force: true });
+  }
 });
 
 test('web downloads and retries require clean sources despite legacy API policies', async ({

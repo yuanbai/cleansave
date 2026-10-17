@@ -64,6 +64,9 @@ try {
   const result = await client.callTool({ name: 'list_records', arguments: {} });
   assert.notEqual(result.isError, true);
   assert.deepEqual(result.structuredContent, { items: [], nextCursor: null });
+  const usage = await client.callTool({ name: 'get_storage_usage', arguments: {} });
+  assert.notEqual(usage.isError, true);
+  assert.deepEqual(usage.structuredContent, { downloadBytes: 0, downloadedFiles: 0 });
   const guest = await isolatedTask(
     pathToFileURL(join(artifact, 'dist/youtube-worker.js')),
     { kind: 'evaluate', code: '({marker:"worker-ok", host:typeof process})' },

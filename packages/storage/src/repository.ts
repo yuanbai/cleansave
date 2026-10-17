@@ -8,11 +8,13 @@ import { z } from 'zod';
 import {
   assetSchema,
   countCaptureSchema,
+  storageUsageSchema,
   type Accepted,
   type Asset,
   type CountCapture,
   type HistoryQuery,
   type ListQuery,
+  type StorageUsage,
 } from '@cleansave/contracts';
 import {
   AppError,
@@ -528,6 +530,20 @@ export class SqliteRepository implements LibraryRepository {
       .where('state', 'in', ['queued', 'running'])
       .execute();
     return { ...record, activeJobIds: active.map((job) => job.id) };
+  }
+
+  /**
+   * Sum completed receipts across the entire active library without loading media or downloading
+   * anything. Excludes staging, metadata, missing receipts, and deleting/merged records.
+   */
+  public async storageUsage(): Promise<StorageUsage> {
+    const result = await sql<StorageUsage>`
+      SELECT COALESCE(SUM(json_extract(asset.value, '$.bytes')), 0) AS "downloadBytes",
+             COUNT(*) AS "downloadedFiles"
+      FROM records, json_each(records.data, '$.assets') AS asset
+      WHERE records.lifecycle = 'active' AND json_extract(asset.value, '$.state') = 'complete'
+    `.execute(this.db);
+    return storageUsageSchema.parse(result.rows[0]);
   }
 
   /** Browse active records with bound filters, full-text search, and stable query-bound cursors. */
